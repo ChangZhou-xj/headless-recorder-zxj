@@ -6,6 +6,9 @@ function createChromeLocalStorageMock(options) {
   return {
     options,
     storage: {
+      onChanged: {
+        addListener: jest.fn(),
+      },
       local: {
         get: (key, cb) => {
           return cb(ops)
@@ -22,27 +25,32 @@ function createChromeLocalStorageMock(options) {
 describe('App.vue', () => {
   beforeEach(() => {
     window.chrome = null
+    window.matchMedia = jest.fn(() => ({ matches: false }))
   })
 
-  test('it has the correct pristine / empty state', () => {
+  test('默认展示中文配置项', () => {
     window.chrome = createChromeLocalStorageMock()
     const wrapper = mount(App)
-    expect(wrapper.element).toMatchSnapshot()
+
+    expect(wrapper.text()).toContain('录制设置')
+    expect(wrapper.text()).toContain('用例导出')
   })
 
-  test('it loads the default options', () => {
+  test('默认加载 Excel 文件名前缀', () => {
     window.chrome = createChromeLocalStorageMock()
     const wrapper = mount(App)
-    expect(wrapper.vm.$data.options.code.wrapAsync).toBeTruthy()
+
+    expect(wrapper.vm.$data.options.testCase.fileNamePrefix).toBe('测试用例')
   })
 
-  test('it has the default key code for capturing inputs as 9 (Tab)', () => {
+  test('默认输入确认按键为 9（Tab）', () => {
     window.chrome = createChromeLocalStorageMock()
     const wrapper = mount(App)
+
     expect(wrapper.vm.$data.options.code.keyCode).toBe(9)
   })
 
-  test('clicking the button will listen for the next keydown and update the key code option', () => {
+  test('点击按钮后可捕获新的按键码', () => {
     const options = { code: { keyCode: 9 } }
     window.chrome = createChromeLocalStorageMock(options)
     const wrapper = mount(App)
@@ -60,27 +68,27 @@ describe('App.vue', () => {
       })
   })
 
-  test("it stores and loads the user's edited options", () => {
-    const options = { code: { wrapAsync: true } }
+  test('可以保存并重新读取导出文件名前缀', () => {
+    const options = { testCase: { fileNamePrefix: '冒烟测试' } }
     window.chrome = createChromeLocalStorageMock(options)
     const wrapper = mount(App)
 
     return wrapper.vm
       .$nextTick()
       .then(() => {
-        const checkBox = wrapper.find('#options-code-wrapAsync')
-        checkBox.trigger('click')
-        expect(wrapper.find('.saving-badge').text()).toEqual('Saving...')
+        const input = wrapper.find('#file-name-prefix')
+        input.setValue('登录测试用例')
+        input.trigger('change')
+        expect(wrapper.text()).toContain('保存中...')
         return wrapper.vm.$nextTick()
       })
       .then(() => {
-        // we need to simulate a page reload
         wrapper.vm.load()
         return wrapper.vm.$nextTick()
       })
       .then(() => {
-        const checkBox = wrapper.find('#options-code-wrapAsync')
-        return expect(checkBox.element.checked).toBeFalsy()
+        const input = wrapper.find('#file-name-prefix')
+        expect(input.element.value).toBe('登录测试用例')
       })
   })
 })

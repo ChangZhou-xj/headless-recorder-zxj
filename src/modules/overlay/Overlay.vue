@@ -9,26 +9,15 @@
   >
     <template v-if="isStopped">
       <div class="hr-success-message">
-        <h3>Recording finished!</h3>
-        <p>You can copy the code to clipboard right away!</p>
+        <h3>录制完成</h3>
+        <p>请打开扩展弹窗查看测试用例，并导出 Excel 表格。</p>
       </div>
       <div class="hr-success-bar">
-        <button @click="copy" class="hr-btn-large" style="width: 151px;">
-          <img
-            v-show="!isCopying"
-            width="16"
-            height="16"
-            :src="getIcon('duplicate')"
-            alt="copy to clipboard"
-          />
-          <span v-show="!isCopying">Copy to clipboard</span>
-          <span v-show="isCopying">Copied!</span>
-        </button>
         <button @click="restart" class="hr-btn-large">
-          <img width="16" height="16" :src="getIcon('sync')" alt="restart recording" />
-          Restart Recording
+          <img width="16" height="16" :src="getIcon('sync')" alt="重新录制" />
+          重新录制
         </button>
-        <button @click="close" class="btn-close">
+        <button @click="close" class="hr-btn-close">
           &times;
         </button>
       </div>
@@ -36,16 +25,16 @@
     <template v-else>
       <div class="hr-rec" v-show="!isPaused">
         <span class="hr-red-dot"></span>
-        REC
+        录制中
       </div>
       <span class="hr-shortcut">
-        alt + k to hide
+        Alt + K 隐藏
       </span>
       <button
         class="hr-btn"
         title="stop"
         @click="stop"
-        v-tippy="{ content: 'Stop Recording', appendTo: 'parent' }"
+        v-tippy="{ content: '停止录制', appendTo: 'parent' }"
       >
         <div class="hr-stop-square"></div>
       </button>
@@ -53,27 +42,27 @@
         class="hr-btn"
         title="pause"
         @click="pause"
-        v-tippy="{ content: isPaused ? 'Resume Recording' : 'Pause Recording', appendTo: 'parent' }"
+        v-tippy="{ content: isPaused ? '继续录制' : '暂停录制', appendTo: 'parent' }"
       >
-        <img v-show="isPaused" width="27" height="27" :src="getIcon('play')" alt="play" />
-        <img v-show="!isPaused" width="27" height="27" :src="getIcon('pause')" alt="pause" />
+        <img v-show="isPaused" width="27" height="27" :src="getIcon('play')" alt="继续录制" />
+        <img v-show="!isPaused" width="27" height="27" :src="getIcon('pause')" alt="暂停录制" />
       </button>
       <div class="hr-separator"></div>
       <button
         :disabled="isPaused"
         class="hr-btn-big"
         @click.prevent="fullScreenshot"
-        v-tippy="{ content: 'Full Screenshot (alt+shift+F)', appendTo: 'parent' }"
+        v-tippy="{ content: '整页截图（Alt+Shift+F）', appendTo: 'parent' }"
       >
-        <img width="27" height="27" :src="getIcon('screen')" alt="full page sreenshot" />
+        <img width="27" height="27" :src="getIcon('screen')" alt="整页截图" />
       </button>
       <button
         :disabled="isPaused"
         class="hr-btn-big"
         @click.prevent="clippedScreenshot"
-        v-tippy="{ content: 'Element Screenshot (alt+shift+E)', appendTo: 'parent' }"
+        v-tippy="{ content: '元素截图（Alt+Shift+E）', appendTo: 'parent' }"
       >
-        <img width="27" height="27" :src="getIcon('clip')" alt="clipped sreenshot" />
+        <img width="27" height="27" :src="getIcon('clip')" alt="元素截图" />
       </button>
       <div class="hr-separator"></div>
       <span class="hr-current-selector">
@@ -107,7 +96,6 @@ export default {
       'screenshotMode',
       'darkMode',
       'hasRecorded',
-      'isCopying',
       'recording',
     ]),
   },
@@ -121,7 +109,7 @@ export default {
   },
 
   methods: {
-    ...mapMutations(['copy', 'stop', 'close', 'restart']),
+    ...mapMutations(['stop', 'close', 'restart']),
 
     getIcon(icon) {
       return browser.runtime.getURL(`icons/${this.darkMode ? 'dark' : 'light'}/${icon}.svg`)
@@ -164,260 +152,247 @@ export default {
 }
 </script>
 
-<style lang="scss">
+<style>
 @import '../../assets/animations.css';
 
-$namespace: 'hr';
+#headless-recorder-overlay .hr-button-open {
+  position: fixed;
+  bottom: 10px;
+  left: 0;
+  right: 0;
+}
 
-#headless-recorder-overlay {
-  .#{$namespace}-button-open {
-    position: fixed;
-    bottom: 10px;
-    left: 0;
-    right: 0;
-  }
+#headless-recorder-overlay button {
+  border: none;
+  margin: 0 10px 0 0;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: normal;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+}
 
-  button {
-    border: none;
-    margin: 0;
-    padding: 0;
+#headless-recorder-overlay nav {
+  font-family: sans-serif;
+  box-sizing: border-box;
+  animation-name: slideup;
+  border: solid 2px #f9fafc;
+  animation-duration: 0.3s;
+  animation-iteration-count: 1;
+  animation-timing-function: ease-in-out;
+  display: flex;
+  align-items: center;
+  z-index: 2147483647;
+  position: fixed;
+  bottom: 10px;
+  left: 0;
+  right: 0;
+  margin-left: auto;
+  margin-right: auto;
+  font-size: 12px;
+  color: #1f2d3d;
+  padding: 20px 16px;
+  transition: all 0.1s ease;
+  width: 828px;
+  height: 72px;
+  background: #f9fafc;
+  box-shadow: 0px 5px 25px rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+}
 
-    overflow: visible;
-    background: transparent;
-    color: inherit;
-    font: inherit;
-    line-height: normal;
+#headless-recorder-overlay nav.hr-event-recorded {
+  border: solid 2px #45c8f1 !important;
+  transition: all 0.1s linear;
+}
 
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    cursor: pointer;
-    margin-right: 10px;
-  }
+#headless-recorder-overlay nav .hr-btn-big {
+  padding: 5px 15px;
+  background: #eff2f7;
+  border-radius: 3px;
+}
 
-  nav {
-    font-family: sans-serif;
-    box-sizing: border-box;
-    animation-name: slideup;
-    border: solid 2px #f9fafc;
-    animation-duration: 0.3s;
-    animation-iteration-count: 1;
-    animation-timing-function: ease-in-out;
-    display: flex;
-    align-items: center;
-    z-index: 2147483647;
-    position: fixed;
-    bottom: 10px;
-    left: 0;
-    right: 0;
-    margin-left: auto;
-    margin-right: auto;
-    font-size: 12px;
-    color: #1f2d3d;
-    padding: 20px 16px;
-    transition: all 0.1s ease;
-    width: 828px;
-    height: 72px;
-    background: #f9fafc;
-    box-shadow: 0px 5px 25px rgba(0, 0, 0, 0.15);
-    border-radius: 6px;
+#headless-recorder-overlay nav .hr-btn-big:disabled {
+  cursor: not-allowed;
+}
 
-    &.#{$namespace}-event-recorded {
-      border: solid 2px #45c8f1 !important;
-      transition: all 0.1s linear;
-    }
+#headless-recorder-overlay nav .hr-btn {
+  padding: 5px 0;
+}
 
-    button {
-      &.#{$namespace}-btn-big {
-        padding: 5px 15px;
-        background: #eff2f7;
-        border-radius: 3px;
+#headless-recorder-overlay nav .hr-btn-large {
+  border-radius: 3px;
+  background: #eff2f7;
+  padding: 9px 17px 9px 8px;
+  color: #1f2d3d;
+  font-weight: 600;
+  margin-right: 16px;
+}
 
-        &:disabled {
-          cursor: not-allowed;
-        }
-      }
+#headless-recorder-overlay nav .hr-btn-large:last-of-type {
+  margin-right: 0;
+}
 
-      &.#{$namespace}-btn {
-        padding: 5px 0;
-      }
+#headless-recorder-overlay nav .hr-btn-large:hover {
+  background: #e0e6ed;
+}
 
-      &.#{$namespace}-btn-large {
-        border-radius: 3px;
-        background: #eff2f7;
-        padding: 9px 17px 9px 8px;
-        color: #1f2d3d;
-        font-weight: 600;
-        margin-right: 16px;
+#headless-recorder-overlay nav .hr-btn-large img {
+  margin-right: 8px;
+}
 
-        &:last-of-type {
-          margin-right: 0;
-        }
+#headless-recorder-overlay nav .hr-btn-close {
+  font-size: 18px;
+  color: #161616;
+  margin-right: 0;
+}
 
-        &:hover {
-          background: #e0e6ed;
-        }
+#headless-recorder-overlay nav .hr-shortcut {
+  color: #8492a6;
+  margin-right: 0;
+  font-family: sans-serif;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
 
-        img {
-          margin-right: 8px;
-        }
-      }
+#headless-recorder-overlay nav .hr-rec {
+  font-family: sans-serif;
+  animation: pulse 2s infinite;
+  font-size: 12px;
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  font-weight: 600;
+  color: #ff4949;
+  text-transform: uppercase;
+}
 
-      &.#{$namespace}-btn-close {
-        font-size: 18px;
-        color: #161616;
-        margin-right: 0;
-      }
-    }
+#headless-recorder-overlay nav .hr-red-dot {
+  display: inline-block;
+  border-radius: 50%;
+  width: 9px;
+  height: 9px;
+  background: #ff4949;
+}
 
-    .#{$namespace}-shortcut {
-      color: #8492a6;
-      margin-right: 0;
-      font-family: sans-serif;
-      position: absolute;
-      top: 4px;
-      right: 4px;
-    }
+#headless-recorder-overlay nav .hr-separator {
+  width: 1px;
+  height: 32px;
+  background: #e0e6ed;
+  margin-right: 0.8rem;
+}
 
-    .#{$namespace}-rec {
-      font-family: sans-serif;
-      animation: pulse 2s infinite;
-      font-size: 12px;
-      position: absolute;
-      top: 4px;
-      left: 4px;
-      font-weight: 600;
-      color: #ff4949;
-      text-transform: uppercase;
+#headless-recorder-overlay nav .hr-stop-square {
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  background-color: #1f2d3d;
+}
 
-      .#{$namespace}-red-dot {
-        display: inline-block;
-        border-radius: 50%;
-        width: 9px;
-        height: 9px;
-        background: #ff4949;
-      }
-    }
+#headless-recorder-overlay nav .hr-current-selector {
+  font-weight: 500;
+  font-size: 10px;
+  line-height: 20px;
+  font-family: monospace;
+}
 
-    .#{$namespace}-separator {
-      width: 1px;
-      height: 32px;
-      background: #e0e6ed;
-      margin-right: 0.8rem;
-    }
+#headless-recorder-overlay nav .hr-success-bar {
+  display: flex;
+  width: 60%;
+  justify-content: flex-end;
+}
 
-    .#{$namespace}-stop-square {
-      width: 24px;
-      height: 24px;
-      border-radius: 3px;
-      background-color: #1f2d3d;
-    }
+#headless-recorder-overlay nav .hr-success-message {
+  width: 40%;
+}
 
-    .#{$namespace}-current-selector {
-      font-weight: 500;
-      font-size: 10px;
-      line-height: 20px;
-      font-family: monospace;
-    }
+#headless-recorder-overlay nav .hr-success-message h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  color: #1f2d3d;
+}
 
-    .#{$namespace}-success-bar {
-      display: flex;
-      width: 60%;
-      justify-content: flex-end;
-    }
+#headless-recorder-overlay nav .hr-success-message p {
+  font-size: 12px;
+  margin: 0;
+  color: #3c4858;
+}
 
-    .#{$namespace}-success-message {
-      width: 40%;
+#headless-recorder-overlay nav .tippy-box {
+  box-shadow: 0px 5px 25px rgba(0, 0, 0, 0.15);
+  margin-top: -45px;
+  color: #1f2d3d;
+  background: #f9fafc;
+  border-radius: 4px;
+}
 
-      h3 {
-        font-size: 14px;
-        font-weight: 600;
-        margin: 0;
-        color: #1f2d3d;
-      }
+#headless-recorder-overlay nav .tippy-arrow {
+  color: #f9fafc;
+}
 
-      p {
-        font-size: 12px;
-        margin: 0;
-        color: #3c4858;
-      }
-    }
+#headless-recorder-overlay nav.dark {
+  background: #161616;
+  border: solid 2px #161616;
+  color: #f9fafc;
+}
 
-    .tippy-box {
-      box-shadow: 0px 5px 25px rgba(0, 0, 0, 0.15);
-      margin-top: -45px;
-      color: #1f2d3d;
-      background: #f9fafc;
-      border-radius: 4px;
-    }
+#headless-recorder-overlay nav.dark .hr-btn-big {
+  padding: 5px 15px;
+  background: #2e2e2e;
+  border-radius: 3px;
+}
 
-    .tippy-arrow {
-      color: #f9fafc;
-    }
-  }
+#headless-recorder-overlay nav.dark .hr-btn-large {
+  background: #1f2d3d;
+  color: #f9fafc;
+}
 
-  nav.dark {
-    background: #161616;
-    border: solid 2px #161616;
-    color: #f9fafc;
+#headless-recorder-overlay nav.dark .hr-btn-large:hover {
+  background: #474747;
+}
 
-    button {
-      &.#{$namespace}-btn-big {
-        padding: 5px 15px;
-        background: #2e2e2e;
-        border-radius: 3px;
-      }
+#headless-recorder-overlay nav.dark .hr-btn-close,
+#headless-recorder-overlay nav.dark .hr-btn-label,
+#headless-recorder-overlay nav.dark .hr-btn-up {
+  color: #fff;
+}
 
-      &.#{$namespace}-btn-large {
-        background: #1f2d3d;
-        color: #f9fafc;
+#headless-recorder-overlay nav.dark .hr-btn-up {
+  background: #161616;
+}
 
-        &:hover {
-          background: #474747;
-        }
-      }
+#headless-recorder-overlay nav.dark .hr-success-message h3 {
+  color: #fff;
+}
 
-      &.#{$namespace}-btn-close,
-      &.#{$namespace}-btn-label,
-      &.#{$namespace}-btn-up {
-        color: #fff;
-      }
+#headless-recorder-overlay nav.dark .hr-success-message p {
+  color: #e0e6ed;
+}
 
-      &.#{$namespace}-btn-up {
-        background: #161616;
-      }
-    }
+#headless-recorder-overlay nav.dark .hr-separator {
+  background: #2e2e2e;
+}
 
-    .#{$namespace}-success-message {
-      h3 {
-        color: #fff;
-      }
+#headless-recorder-overlay nav.dark .hr-stop-square {
+  background-color: #f9fafc;
+}
 
-      p {
-        color: #e0e6ed;
-      }
-    }
+#headless-recorder-overlay nav.dark .tippy-box {
+  color: #f9fafc;
+  background: #161616;
+}
 
-    .#{$namespace}-separator {
-      background: #2e2e2e;
-    }
+#headless-recorder-overlay nav.dark .tippy-arrow {
+  color: #161616;
+}
 
-    .#{$namespace}-stop-square {
-      background-color: #f9fafc;
-    }
-
-    .tippy-box {
-      color: #f9fafc;
-      background: #161616;
-    }
-
-    .tippy-arrow {
-      color: #161616;
-    }
-  }
-
-  nav.hide {
-    transform: translateY(82px) !important;
-  }
+#headless-recorder-overlay nav.hide {
+  transform: translateY(82px) !important;
 }
 </style>

@@ -3,84 +3,51 @@
     data-test-id="results-tab"
     class="flex flex-col bg-blue-light overflow-hidden mt-4 h-100 dark:bg-black"
   >
-    <div class="flex flex-row">
-      <button
-        v-for="tab in tabs"
-        :key="tab"
-        class="w-1/2 p-2 font-semibold text-xs capitalize rounded-t"
-        :class="
-          activeTab === tab
-            ? 'bg-black text-gray-lightest dark:bg-black-shady'
-            : 'text-gray-dark dark:text-gray'
-        "
-        @click.prevent="changeTab(tab)"
-      >
-        {{ tab }}
-      </button>
+    <div class="px-3 py-2 border-b border-gray-light dark:border-gray-dark">
+      <h3 class="font-semibold text-sm text-gray-darkest dark:text-gray-lightest">测试用例</h3>
+      <p class="text-xs text-gray-dark dark:text-gray-light mt-1">
+        已根据录制结果生成 {{ cases.length }} 条测试用例，可直接导出为 Excel。
+      </p>
     </div>
 
-    <div class="sc p-2 bg-black dark:bg-black-shady">
-      <pre
-        v-if="code"
-        v-highlightjs="code"
-        class="overflow-auto bg-black dark:bg-black-shady h-100"
-      >
-      <code ref="code" class="javascript bg-black dark:bg-black-shady px-2 break-word whitespace-pre-wrap overflow-x-hidden"></code>
-      </pre>
-      <pre v-else>
-        <code>No code yet...</code>
-      </pre>
+    <div class="sc p-2 bg-white dark:bg-black-shady overflow-auto h-100">
+      <table v-if="cases.length" class="w-full text-xs border-collapse results-table">
+        <thead>
+          <tr>
+            <th v-for="column in columns" :key="column">
+              {{ column }}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in cases" :key="row['编号']">
+            <td v-for="column in columns" :key="`${row['编号']}-${column}`">
+              <div class="whitespace-pre-wrap break-words">{{ row[column] }}</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-else class="text-xs text-gray-dark dark:text-gray-light">暂未生成测试用例。</div>
     </div>
   </div>
 </template>
 <script>
-import { headlessTypes } from '@/modules/code-generator/constants'
+import { TEST_CASE_COLUMNS } from '@/modules/test-case-generator'
 
 export default {
   name: 'ResultsTab',
 
   props: {
-    puppeteer: {
-      type: String,
-      default: '',
-    },
-    playwright: {
-      type: String,
-      default: '',
-    },
-    options: {
-      type: Object,
-      default: () => ({}),
+    cases: {
+      type: Array,
+      default: () => [],
     },
   },
 
   data() {
     return {
-      activeTab: headlessTypes.PLAYWRIGHT,
-      tabs: [headlessTypes.PLAYWRIGHT, headlessTypes.PUPPETEER],
+      columns: TEST_CASE_COLUMNS,
     }
-  },
-
-  computed: {
-    code() {
-      return this.activeTab === headlessTypes.PUPPETEER ? this.puppeteer : this.playwright
-    },
-  },
-
-  mounted() {
-    if (!this.options?.code?.showPlaywrightFirst) {
-      this.activeTab = headlessTypes.PUPPETEER
-      this.tabs = this.tabs.reverse()
-    }
-
-    this.$emit('update:tab', this.activeTab)
-  },
-
-  methods: {
-    changeTab(tab) {
-      this.activeTab = tab
-      this.$emit('update:tab', tab)
-    },
   },
 }
 </script>
@@ -103,5 +70,20 @@ pre::-webkit-scrollbar-thumb {
 
 pre::-webkit-scrollbar-corner {
   background: yellow;
+}
+
+.results-table th,
+.results-table td {
+  border: 1px solid #d2dce6;
+  padding: 8px;
+  min-width: 120px;
+  vertical-align: top;
+}
+
+.results-table th {
+  background: #f3f4f6;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 </style>

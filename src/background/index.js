@@ -29,9 +29,15 @@ class Background {
   }
 
   init() {
-    chrome.extension.onConnect.addListener(port => {
+    chrome.runtime.onConnect.addListener(port => {
       port.onMessage.addListener(msg => this.handlePopupMessage(msg))
     })
+  }
+
+  async getRecording() {
+    const { recording = [] } = await storage.get('recording')
+    this._recording = recording
+    return recording
   }
 
   async start() {
@@ -165,8 +171,10 @@ class Background {
     msg.frameUrl = sender ? sender.url : null
 
     if (!this._isPaused) {
-      this._recording.push(msg)
-      storage.set({ recording: this._recording })
+      this.getRecording().then(recording => {
+        this._recording = [...recording, msg]
+        storage.set({ recording: this._recording })
+      })
     }
   }
 
@@ -301,5 +309,5 @@ class Background {
   }
 }
 
-window.headlessRecorder = new Background()
-window.headlessRecorder.init()
+const headlessRecorder = new Background()
+headlessRecorder.init()

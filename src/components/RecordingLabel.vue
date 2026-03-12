@@ -17,7 +17,7 @@ export default {
 
   computed: {
     text() {
-      return this.isPaused ? 'Paused' : 'Recording...'
+      return this.isPaused ? '已暂停' : '录制中...'
     },
   },
 }

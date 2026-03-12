@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "测试用例录制器",
+    "description": ""
+  },
+  "extDescription": {
+    "message": "用于录制浏览器操作、自动拆分测试场景并导出测试用例 Excel 的 Chrome 扩展。",
+    "description": ""
+  }
+}

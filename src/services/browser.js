@@ -1,6 +1,6 @@
 const CONTENT_SCRIPT_PATH = 'js/content-script.js'
 const RUN_URL = 'https://app.checklyhq.com/checks/new/browser'
-const DOCS_URL = 'https://www.checklyhq.com/docs/headless-recorder'
+const DOCS_URL = 'https://github.com/checkly/headless-recorder#readme'
 const SIGNUP_URL =
   'https://www.checklyhq.com/product/synthetic-monitoring/?utm_source=Chrome+Extension&utm_medium=Headless+Recorder+Chrome+Extension&utm_campaign=Headless+Recorder&utm_id=Open+Source'
 
@@ -16,7 +16,20 @@ export default {
     chrome.tabs.sendMessage(tab.id, { action, value, clean })
   },
 
-  injectContentScript() {
+  async injectContentScript() {
+    const tab = await this.getActiveTab()
+
+    if (!tab?.id) {
+      return null
+    }
+
+    if (chrome.scripting?.executeScript) {
+      return chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: false },
+        files: [CONTENT_SCRIPT_PATH],
+      })
+    }
+
     return new Promise(function(resolve) {
       chrome.tabs.executeScript({ file: CONTENT_SCRIPT_PATH, allFrames: false }, res =>
         resolve(res)
@@ -44,7 +57,7 @@ export default {
   },
 
   getBackgroundBus() {
-    return chrome.extension.connect({ name: 'recordControls' })
+    return chrome.runtime.connect({ name: 'recordControls' })
   },
 
   openOptionsPage() {

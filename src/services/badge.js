@@ -5,10 +5,14 @@ const DEFAULT_LOGO = './images/logo.png'
 const RECORDING_LOGO = './images/logo-red.png'
 const PAUSE_LOGO = './images/logo-yellow.png'
 
+function getActionApi() {
+  return chrome.action || chrome.browserAction
+}
+
 export default {
   stop(text) {
-    chrome.browserAction.setIcon({ path: DEFAULT_LOGO })
-    chrome.browserAction.setBadgeBackgroundColor({ color: DEFAULT_COLOR })
+    getActionApi().setIcon({ path: DEFAULT_LOGO })
+    getActionApi().setBadgeBackgroundColor({ color: DEFAULT_COLOR })
     this.setText(text)
   },
 
@@ -17,19 +21,19 @@ export default {
   },
 
   setText(text) {
-    chrome.browserAction.setBadgeText({ text })
+    getActionApi().setBadgeText({ text })
   },
 
   pause() {
-    chrome.browserAction.setIcon({ path: PAUSE_LOGO })
+    getActionApi().setIcon({ path: PAUSE_LOGO })
   },
 
   start() {
-    chrome.browserAction.setIcon({ path: RECORDING_LOGO })
+    getActionApi().setIcon({ path: RECORDING_LOGO })
   },
 
   wait() {
-    chrome.browserAction.setBadgeBackgroundColor({ color: RECORDING_COLOR })
+    getActionApi().setBadgeBackgroundColor({ color: RECORDING_COLOR })
     this.setText('wait')
   },
 }

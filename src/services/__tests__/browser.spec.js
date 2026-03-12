@@ -20,11 +20,15 @@ window.chrome = {
     executeScript: jest.fn((options, cb) => (cb(options))),
     sendMessage: jest.fn(),
   },
+  runtime: {
+    connect: jest.fn(),
+    openOptionsPage: jest.fn()
+  },
+  scripting: {
+    executeScript: jest.fn(() => Promise.resolve())
+  },
   extension: {
     connect: jest.fn(),
-  },
-  runtime: {
-    openOptionsPage: jest.fn()
   },
   cookies: {
     getAll: jest.fn((options, cb) => (cb(cookies)))
@@ -42,7 +46,8 @@ global.navigator.clipboard = {
 
 beforeEach(() => {
   window?.chrome?.tabs.create.mockClear()
-  window?.chrome?.extension.connect.mockClear()
+  window?.chrome?.runtime.connect.mockClear()
+  window?.chrome?.scripting.executeScript.mockClear()
   window?.chrome?.runtime.openOptionsPage.mockClear()
   window?.chrome?.tabs.query.mockClear()
 })
@@ -65,7 +70,7 @@ describe('copyToClipboard', () => {
 describe('injectContentScript', () => {
   it('executes content script', async () => {
     await browser.injectContentScript()
-    expect(window.chrome.tabs.executeScript.mock.calls.length).toBe(1)
+    expect(window.chrome.scripting.executeScript.mock.calls.length).toBe(1)
   })
 })
 
@@ -91,7 +96,7 @@ describe('openChecklyRunner', () => {
 describe('getBackgroundBus', () => {
   it('gets backgorund bus', async () => {
     browser.getBackgroundBus()
-    expect(window.chrome.extension.connect.mock.calls.length).toBe(1)
+    expect(window.chrome.runtime.connect.mock.calls.length).toBe(1)
   })
 })
 

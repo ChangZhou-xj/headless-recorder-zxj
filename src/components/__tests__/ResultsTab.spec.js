@@ -1,41 +1,37 @@
 import { mount } from '@vue/test-utils'
-import VueHighlightJS from 'vue3-highlightjs'
 
-import ResultsTab from '../ResultsTab'
+import ResultsTab from '../../views/Results.vue'
 
-describe('RecordingTab.vue', () => {
-  test('it has the correct pristine / empty state', () => {
+describe('Results.vue', () => {
+  test('空状态显示未生成提示', () => {
     const wrapper = mount(ResultsTab)
-    expect(wrapper.element).toMatchSnapshot()
-    expect(wrapper.find('code.javascript').exists()).toBe(false)
+
+    expect(wrapper.text()).toContain('暂未生成测试用例')
   })
 
-  test('it show a code box when there is code', () => {
+  test('渲染测试用例表格', () => {
     const wrapper = mount(ResultsTab, {
-      global: {
-        plugins: [VueHighlightJS],
-      },
-      props: { puppeteer: `await page.click('.class')` },
-    })
-    expect(wrapper.element).toMatchSnapshot()
-    expect(wrapper.find('code.javascript').exists()).toBe(true)
-  })
-
-  test('it render tabs for puppeteer & playwright', () => {
-    const wrapper = mount(ResultsTab)
-    expect(wrapper.findAll('.tabs__action').length).toEqual(2)
-  })
-
-  test('it render playwright first when option is present', async () => {
-    const wrapper = await mount(ResultsTab, {
       props: {
-        options: {
-          code: {
-            showPlaywrightFirst: true,
+        cases: [
+          {
+            编号: 'TC-001',
+            功能: '登录',
+            用例标题: '验证登录流程',
+            前置条件: '已进入登录页',
+            测试数据: '用户名/密码',
+            操作步骤: '1. 输入用户名',
+            预期结果: '登录成功',
+            实际结果: '待执行',
+            缺陷单号: '',
+            用例类型: '功能测试',
+            备注: '自动生成',
           },
-        },
+        ],
       },
     })
-    expect(wrapper.find('.tabs__action').text()).toEqual('🎭playwright')
+
+    expect(wrapper.findAll('thead th').length).toBe(11)
+    expect(wrapper.text()).toContain('验证登录流程')
+    expect(wrapper.text()).toContain('待执行')
   })
 })

@@ -1,149 +1,169 @@
-# 🚨 Deprecated!
-As of Dec 16th 2022, Headless Recorder is fully deprecated. No new changes, support, maintenance or new features are expected to land.
+# 测试用例录制器
 
-For more information and possible alternatives refer to this [issue](https://github.com/checkly/headless-recorder/issues/232).
+> 基于 `headless-recorder` 的二次汉语化改造版本，用于录制浏览器操作、自动拆分测试场景，并导出标准化测试用例 Excel。
 
+<p align="center">
+  <img width="200px" src="./assets/logo.png" alt="测试用例录制器" />
 </p>
 
 <p align="center">
-  <img width="200px" src="./assets/logo.png" alt="Headless Recorder" />
-</p>
-
-<p>
-  <img height="128" src="https://www.checklyhq.com/images/footer-logo.svg" align="right" />
-  <h1>Headless Recorder</h1>
-</p>
-
-<p>
   <img src="https://github.com/checkly/headless-recorder/workflows/Lint%20&%20Build%20&%20Test/badge.svg?branch=main" alt="Github Build"/>
-  <img src="https://img.shields.io/chrome-web-store/users/djeegiggegleadkkbgopoonhjimgehda?label=Chrome%20Webstore%20-%20Users" alt="Chrome Webstore Users" />
-  <img src="https://img.shields.io/chrome-web-store/v/djeegiggegleadkkbgopoonhjimgehda?label=Chrome%20Webstore" alt="Chrome Webstore Version" />
 </p>
 
-
-> 🎥 Headless recorder is a Chrome extension that records your browser interactions and generates a Playwright/Puppeteer script.
-
-
-<br>
 <p align="center">
-  <img src="./assets/hr.gif" alt="Headless recorder demo" />
+  <img src="./assets/hr.gif" alt="测试用例录制器演示" />
 </p>
-<br>
 
-## Overview
+## 项目说明
 
-Headless recorder is a Chrome extension that records your browser interactions and generates a [Playwright](https://playwright.dev/) or [Puppeteer](http://pptr.dev/) script. Install it from the [Chrome Webstore](https://chrome.google.com/webstore/detail/puppeteer-recorder/djeegiggegleadkkbgopoonhjimgehda) to get started!
+本项目源自开源项目 `checkly/headless-recorder`，原项目主要用于录制浏览器操作并生成 `Playwright / Puppeteer` 脚本。
 
-This project builds on existing open source projects (see [Credits](#-credits)) but adds extensibility, configurability and a smoother UI. For more information, please check our [documentation](https://www.checklyhq.com/docs/headless-recorder/).
+当前版本已面向 **测试管理与测试设计场景** 进行了重新改造，重点能力从“生成自动化脚本”切换为：
 
-> 🤔 Do you want to learn more about Puppeteer and Playwright? Check our open [Headless Guides](https://www.checklyhq.com/learn/headless/)
+- 汉化扩展界面与产品说明
+- 录制浏览器交互动作
+- 自动识别页面与操作场景
+- 自动拆分出多条测试用例
+- 区分 **冒烟 / 功能 / 回归** 测试类型
+- 导出符合测试管理习惯的 Excel 用例表格
 
-<br>
+## 现在可以做什么
 
-## What you can do?
+- 录制页面打开、点击、输入、选择、截图等操作
+- 自动识别页面访问、表单交互、截图校验等不同场景
+- 按页面 / 功能拆分为多条测试用例
+- 自动生成以下列结构的测试用例表：
 
-- Records clicks and type events.
-- Add waitForNavigation, setViewPort and other useful clauses.
-- Generates a Playwright & Puppeteer script.
-- Preview CSS selectors of HTML elements.
-- Take full page and element screenshots.
-- Pause, resume and restart recording.
-- Persist latest script in your browser
-- Copy to clipboard.
-- Run generated scripts directly on [Checkly](https://checklyhq.com)
-- Flexible configuration options and dark mode support.
-- Allows `data-id` configuration for element selection.
+| 编号 | 功能 | 用例标题 | 前置条件 | 测试数据 | 操作步骤 | 预期结果 | 实际结果 | 缺陷单号 | 用例类型 | 备注 |
+|---|---|---|---|---|---|---|---|---|---|---|
 
-#### Recorded Events
-  - `click`
-  - `dblclick`
-  - `change`
-  - `keydown`
-  - `select`
-  - `submit`
-  - `load`
-  - `unload`
+- 导出真实 `.xlsx` 文件
+- 支持深色模式
+- 支持自定义 `data-*` 属性作为元素定位优先级
 
-> This collection will be expanded in future releases. 💪
+## 当前版本不开放的能力
 
-<br>
+以下原始能力已经在当前版本中关闭或不对外开放：
 
-## How to use?
+- 生成 Puppeteer 脚本
+- 生成 Playwright 脚本
+- 复制脚本
+- 运行脚本到第三方平台
 
-1. Click the icon and hit the red button.
-2. 👉 Hit <kbd>tab</kbd> after you finish typing in an `input` element. 👈
-3. Click on links, inputs and other elements.
-4. Wait for full page load on each navigation.
+## 支持录制的典型事件
 
-    **The icon will switch from <img width="24px" height="24px" src="./assets/rec.png" alt="recording icon"/>
-    to <img width="24px" height="24px" src="./assets/wait.png" alt="waiting icon"/> to indicate it is ready for more input from you.**
+- `click`
+- `dblclick`
+- `change`
+- `keydown`
+- `select`
+- `submit`
+- 页面跳转与等待
+- 全页截图
+- 元素截图
 
-5. Click Pause when you want to navigate without recording anything. Hit Resume to continue recording.
+## 测试用例生成规则
 
-### ⌨️ Shortcuts
+当前生成逻辑会尽量把录制结果整理成更接近测试文档的结构，而不是简单事件流水：
 
-- `alt + k`: Toggle overlay
-- `alt + shift + F`: Take full page screenshot
-- `alt + shift + E`: Take element screenshot
+### 1. 按页面拆分
 
-<br>
+当录制过程中出现新的页面访问（如 `goto`）时，会自动认为进入了新的页面场景，并单独生成该页面下的测试用例。
 
-## Run Locally
+### 2. 按功能场景拆分
 
-After cloning the project, open the terminal and navigate to project root directory.
+在同一页面内，会继续按以下类型拆分：
+
+- 页面打开与基础可访问性：生成 **冒烟测试**
+- 输入、选择、点击、提交等业务操作：生成 **功能测试**
+- 截图与界面对比场景：生成 **回归测试**
+
+### 3. 智能补全文案
+
+系统会根据录制内容自动补全：
+
+- 用例标题
+- 前置条件
+- 测试数据
+- 操作步骤
+- 预期结果
+- 备注说明
+
+例如：
+
+- 包含输入、下拉选择时，会自动提示“业务前置数据已准备完成”
+- 包含截图时，会自动提示适合进行基线或样式校验
+- 包含页面访问时，会自动生成页面可达与加载成功类预期结果
+
+## 使用方式
+
+1. 打开浏览器扩展弹窗。
+2. 点击红色录制按钮开始录制。
+3. 在页面中执行操作：点击、输入、选择、截图等。
+4. 录制完成后点击停止。
+5. 弹窗中会展示自动生成的测试用例预览。
+6. 点击 **导出 Excel（.xlsx）** 保存测试用例文件。
+
+### 快捷键
+
+- `Alt + K`：显示 / 隐藏录制浮层
+- `Alt + Shift + F`：整页截图
+- `Alt + Shift + E`：元素截图
+
+## 本地运行
+
+建议使用：
+
+- `Node 14.21.3`
+
+安装依赖并运行：
 
 ```bash
-$ npm i # install dependencies
-
-$ npm run serve # run development mode
-
-$ npm run test # run test cases
-
-$ npm run lint # run and fix linter issues
-
-$ npm run build # build and zip for production
+npm i
+npm run serve
+npm run test
+npm run build
 ```
 
-<br>
+## 本地安装扩展
 
-## Install Locally
-
-1. Open chrome and navigate to extensions page using this URL: [`chrome://extensions`](chrome://extensions).
-1. Make sure "**Developer mode**" is enabled.
-1. Click "**Load unpacked extension**" button, browse the `headless-recorder/dist` directory and select it.
+1. 打开 Chrome 并访问：`chrome://extensions`
+2. 打开“开发者模式”
+3. 点击“加载已解压的扩展程序”
+4. 选择项目构建后的 `dist` 目录
 
 ![](./assets/dev-guide.png)
 
-<br>
+## 适用场景
 
-## Release
+适合以下工作场景：
 
-1. Bump version using `npm version` (patch, minor, major).
-2. Push changes with tags `git push --tags`
-3. Generate a release using **gren**: `gren release --override --data-source=milestones --milestone-match="{{tag_name}}"`
+- 手工测试用例快速沉淀
+- 冒烟测试清单整理
+- 回归测试范围记录
+- 页面交互流程梳理
+- 从真实操作轨迹反推测试设计
 
-> 🚨 Make sure all issues associated with the new version are linked to a milestone with the name of the tag.
+## 二次开发建议
 
-<br>
+如果你准备继续扩展本项目，推荐优先从以下方向入手：
 
-## Credits
+- 增强“功能识别”规则，让查询、登录、提交、新增、删除等识别更精准
+- 增加“模块名称 / 业务域”映射配置
+- 支持多 sheet 导出
+- 支持自定义用例模板
+- 支持与测试管理平台对接
 
-Headless recorder is the spiritual successor & love child of segment.io's [Daydream](https://github.com/segmentio/daydream) and [ui recorder](https://github.com/yguan/ui-recorder).
+## 致谢
 
-<br>
+感谢原项目 `checkly/headless-recorder` 提供的录制基础能力。
+
+原项目灵感来自：
+
+- [segmentio/daydream](https://github.com/segmentio/daydream)
+- [yguan/ui-recorder](https://github.com/yguan/ui-recorder)
 
 ## License
 
 [MIT](https://github.com/checkly/headless-recorder/blob/main/LICENSE)
-
-
-<p align="center">
-  <a href="https://checklyhq.com?utm_source=github&utm_medium=sponsor-logo-github&utm_campaign=headless-recorder" target="_blank">
-  <img width="100px" src="./assets/checkly-logo.png?raw=true" alt="Checkly" />
-  </a>
-  <br />
-  <i><sub>Delightful Active Monitoring for Developers</sub></i>
-  <br>
-  <b><sub>From Checkly with ♥️</sub></b>
-<p>
 

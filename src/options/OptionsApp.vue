@@ -1,36 +1,36 @@
 <template>
   <main class="bg-gray-lightest flex py-9 w-full h-screen overflow-auto dark:bg-black">
     <div class="flex flex-col w-1/4 pt-12 pr-6">
-      <a href="https://www.checklyhq.com/docs/headless-recorder/" target="_blank">Docs</a>
-      <a href="https://github.com/checkly/headless-recorder" target="_blank">GitHub</a>
+      <a href="https://www.checklyhq.com/docs/headless-recorder/" target="_blank">帮助文档</a>
+      <a href="https://github.com/checkly/headless-recorder" target="_blank">GitHub 仓库</a>
       <a href="https://github.com/checkly/headless-recorder/blob/main/CHANGELOG.md"
-        >Release notes</a
+        >更新日志</a
       >
       <a
         href="https://chrome.google.com/webstore/detail/headless-recorder/djeegiggegleadkkbgopoonhjimgehda"
         target="_blank"
-        >Chrome Web Store</a
+        >Chrome 商店</a
       >
     </div>
     <div class="flex flex-col w-1/2">
       <header class="flex flex-row justify-between items-center mb-3.5">
         <div class="flex items-baseline">
           <h1 class="text-blue text-2xl font-bold mr-1">
-            Headless Recorder
+            测试用例录制器
           </h1>
-          <span class="text-gray-dark dark:text-gray-light text-sm">v{{ version }}</span>
+          <span class="text-gray-dark dark:text-gray-light text-sm">版本 v{{ version }}</span>
         </div>
         <span
           role="alert"
           class="text-gray-darkest dark:text-white text-base font-semibold"
           v-show="saving"
-          >Saving...</span
+          >保存中...</span
         >
       </header>
 
       <section>
-        <h2>Recorder</h2>
-        <label for="custom-data-attribute">Custom data attribute</label>
+        <h2>录制设置</h2>
+        <label for="custom-data-attribute">自定义 data 属性</label>
         <div class="mb-6">
           <input
             id="custom-data-attribute"
@@ -38,71 +38,63 @@
             type="text"
             v-model.trim="options.code.dataAttribute"
             @change="save"
-            placeholder="your custom data-* attribute"
+            placeholder="例如：data-test"
           />
           <p>
-            Define an attribute that we'll attempt to use when selecting the elements, i.e
-            "data-custom". This is handy when React or Vue based apps generate random class names.
+            为元素定位指定优先使用的 data 属性，例如 <code>data-test</code>。
+            当页面 class 名随机变化时，这个配置会更稳定。
           </p>
           <p>
             <span role="img" aria-label="siren">🚨</span>
             <span class="ml-1 font-bold text-black-shady dark:text-white"
-              >When <span class="italic">"custom data attribute"</span>&nbsp; is set, it will take
-              precedence from over any other selector (even ID)
+              >设置后，将优先使用该属性生成选择器，即使元素存在 ID 也会优先采用该属性。
             </span>
           </p>
         </div>
         <div>
-          <label>Set key code</label>
+          <label>输入确认按键</label>
           <div class="mb-2">
             <Button @click="listenForKeyCodePress" class="font-semibold text-white text-sm">
-              {{ recordingKeyCodePress ? 'Capturing...' : 'Record Key Stroke' }}
+              {{ recordingKeyCodePress ? '正在捕获...' : '记录按键' }}
             </Button>
             <span class="text-gray-dark dark:text-gray-light text-sm ml-3">
               {{ options.code.keyCode }}
             </span>
           </div>
           <p>
-            What key will be used for capturing input changes. The value here is the key code. This
-            will not handle multiple keys.
+            当你在输入框中录入内容后，按下该按键时会记录输入值。这里只支持单个按键码。
           </p>
         </div>
       </section>
 
       <section>
-        <h2>Generator</h2>
-        <Toggle v-model="options.code.wrapAsync">
-          Wrap code in async function
-        </Toggle>
-        <Toggle v-model="options.code.headless">
-          Set <code>headless</code> in playwright/puppeteer launch options
-        </Toggle>
-        <Toggle v-model="options.code.waitForNavigation">
-          Add <code>waitForNavigation</code> lines on navigation
-        </Toggle>
-        <Toggle v-model="options.code.waitForSelectorOnClick">
-          Add <code>waitForSelector</code> lines before every
-          <code>page.click()</code>
-        </Toggle>
-        <Toggle v-model="options.code.blankLinesBetweenBlocks">
-          Add blank lines between code blocks
-        </Toggle>
-        <Toggle v-model="options.code.showPlaywrightFirst">
-          Show Playwright tab first
-        </Toggle>
+        <h2>用例导出</h2>
+        <label for="file-name-prefix">Excel 文件名前缀</label>
+        <div class="mb-2">
+          <input
+            id="file-name-prefix"
+            class="w-full placeholder-gray-darkish bg-gray-lighter h-7 rounded px-2 mb-2 text-sm"
+            type="text"
+            v-model.trim="options.testCase.fileNamePrefix"
+            @change="save"
+            placeholder="例如：登录模块测试用例"
+          />
+        </div>
+        <p>
+          录制结束后会自动生成测试用例预览，并可导出为 <code>.xlsx</code> 文件，直接用 Excel 打开。
+        </p>
       </section>
 
       <section>
-        <h2 class="">Extension</h2>
+        <h2 class="">扩展设置</h2>
         <Toggle v-model="options.extension.darkMode">
-          Use Dark Mode {{ options.extension.darkMode }}
+          启用深色模式
         </Toggle>
         <Toggle v-model="options.extension.telemetry">
-          Allow recording of usage telemetry
+          允许记录基础使用统计
         </Toggle>
         <p>
-          We only record clicks for basic product development, no website content or input data.
-          Data is never, ever shared with 3rd parties.
+          仅记录最基础的功能使用情况，不采集页面正文内容，也不会向第三方共享。
         </p>
       </section>
     </div>
@@ -114,19 +106,24 @@ import { version } from '../../package.json'
 
 import storage from '@/services/storage'
 import { isDarkMode } from '@/services/constants'
-import { defaults as code } from '@/modules/code-generator/base-generator'
+import { defaults as codeDefaults } from '@/modules/code-generator/base-generator'
 import { merge } from 'lodash'
 
 import Button from '@/components/Button'
 import Toggle from '@/components/Toggle'
 
-const defaultOptions = {
-  code,
+const createDefaultOptions = () => ({
+  code: {
+    ...codeDefaults,
+  },
   extension: {
     telemetry: true,
     darkMode: isDarkMode(),
   },
-}
+  testCase: {
+    fileNamePrefix: '测试用例',
+  },
+})
 
 export default {
   name: 'OptionsApp',
@@ -137,7 +134,7 @@ export default {
       version,
       loading: true,
       saving: false,
-      options: defaultOptions,
+      options: createDefaultOptions(),
       recordingKeyCodePress: false,
     }
   },
@@ -177,8 +174,7 @@ export default {
 
     async load() {
       const { options } = await storage.get('options')
-      merge(defaultOptions, options)
-      this.options = Object.assign({}, this.options, defaultOptions)
+      this.options = merge(createDefaultOptions(), options || {})
 
       this.loading = false
     },

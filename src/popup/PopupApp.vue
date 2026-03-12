@@ -15,11 +15,8 @@
     />
 
     <Results
-      :puppeteer="code"
-      :playwright="codeForPlaywright"
-      :options="options"
+      :cases="testCases"
       v-if="showResultsTab"
-      v-on:update:tab="currentResultTab = $event"
     />
 
     <!-- TODO: Move this into its own component -->
@@ -28,23 +25,18 @@
       class="flex py-2 px-3 justify-between bg-black-shady"
       v-show="showResultsTab"
     >
-      <Button dark class="mr-2" @click="restart" v-show="code">
-        <img src="/icons/dark/sync.svg" class="mr-1" alt="restart recording" />
-        Restart
+      <Button dark class="mr-2" @click="restart" v-show="testCases.length">
+        <img src="/icons/dark/sync.svg" class="mr-1" alt="重新录制" />
+        重新录制
       </Button>
-      <Button dark class="mr-2 w-34" @click="copyCode" v-show="code">
+      <Button dark class="mr-2 w-34" @click="exportExcel" v-show="testCases.length">
         <img
-          v-show="!isCopying"
           src="/icons/dark/duplicate.svg"
           class="mr-1"
-          alt="copy code to clipboard"
+          alt="导出测试用例 Excel"
         />
-        <span v-show="!isCopying">Copy to clipboard</span>
-        <span v-show="isCopying">Copied!</span>
-      </Button>
-      <Button @click="run" v-show="code">
-        <img src="/icons/light/zap.svg" class="mr-1" alt="thunder" />
-        Run on Checkly
+        <span v-show="!isExporting">导出 Excel（.xlsx）</span>
+        <span v-show="isExporting">已导出</span>
       </Button>
     </div>
 
@@ -56,9 +48,12 @@
 import browser from '@/services/browser'
 import storage from '@/services/storage'
 import analytics from '@/services/analytics'
+import { merge } from 'lodash'
 import { popupActions, isDarkMode } from '@/services/constants'
 
-import CodeGenerator from '@/modules/code-generator'
+import { defaults as codeDefaults } from '@/modules/code-generator/base-generator'
+import TestCaseGenerator from '@/modules/test-case-generator'
+import { exportTestCasesAsExcel } from '@/services/test-case-exporter'
 
 import Home from '@/views/Home.vue'
 import Results from '@/views/Results.vue'
@@ -70,12 +65,18 @@ import Header from '@/components/Header.vue'
 
 let bus
 
-const defaultOptions = {
+const createDefaultOptions = () => ({
   extension: {
     darkMode: isDarkMode(),
+    telemetry: true,
   },
-  code: {},
-}
+  code: {
+    ...codeDefaults,
+  },
+  testCase: {
+    fileNamePrefix: '测试用例',
+  },
+})
 
 export default {
   name: 'PopupApp',
@@ -90,19 +91,16 @@ export default {
 
   data() {
     return {
-      isLoggedIn: false,
       showResultsTab: false,
       isRecording: false,
       isPaused: false,
-      isCopying: false,
-      currentResultTab: null,
+      isExporting: false,
 
       liveEvents: [],
       recording: [],
 
-      code: '',
-      codeForPlaywright: '',
-      options: defaultOptions,
+      testCases: [],
+      options: createDefaultOptions(),
     }
   },
 
@@ -118,7 +116,6 @@ export default {
   async mounted() {
     this.loadState()
     bus = browser.getBackgroundBus()
-    this.isLoggedIn = await browser.getChecklyCookie()
   },
 
   methods: {
@@ -151,7 +148,7 @@ export default {
       analytics.trackEvent({ options: this.options, event: 'Stop' })
       bus.postMessage({ action: popupActions.STOP })
 
-      await this.generateCode()
+      await this.generateTestCases()
       this.storeState()
     },
 
@@ -162,21 +159,22 @@ export default {
 
     cleanUp() {
       this.recording = this.liveEvents = []
-      this.code = ''
-      this.codeForPlaywright = ''
+      this.testCases = []
       this.showResultsTab = this.isRecording = this.isPaused = false
       this.storeState()
     },
 
-    async generateCode() {
-      const { recording, options = { code: {} } } = await storage.get(['recording', 'options'])
-      const generator = new CodeGenerator(options.code)
-      const { puppeteer, playwright } = generator.generate(recording)
+    async generateTestCases() {
+      const { recording = [], options = {} } = await storage.get(['recording', 'options'])
+      const mergedOptions = merge(createDefaultOptions(), options)
+      const generator = new TestCaseGenerator(mergedOptions.testCase)
+      const testCases = generator.generate(recording)
 
       this.recording = recording
-      this.code = puppeteer
-      this.codeForPlaywright = playwright
-      this.showResultsTab = true
+      this.testCases = testCases
+      this.options = mergedOptions
+      this.showResultsTab = testCases.length > 0
+      this.storeState()
     },
 
     openOptions() {
@@ -187,19 +185,17 @@ export default {
     async loadState() {
       const {
         controls = {},
-        code = '',
         options,
-        codeForPlaywright = '',
         recording,
+        testCases = [],
         clear,
         pause,
         restart,
       } = await storage.get([
         'controls',
-        'code',
         'options',
-        'codeForPlaywright',
         'recording',
+        'testCases',
         'clear',
         'pause',
         'restart',
@@ -207,10 +203,7 @@ export default {
 
       this.isRecording = controls.isRecording
       this.isPaused = controls.isPaused
-      this.options = options || defaultOptions
-
-      this.code = code
-      this.codeForPlaywright = codeForPlaywright
+      this.options = merge(createDefaultOptions(), options || {})
 
       if (this.isRecording) {
         this.liveEvents = recording
@@ -230,23 +223,32 @@ export default {
           this.toggleRecord(false)
           storage.remove(['restart'])
         }
-      } else if (this.code) {
-        this.generateCode()
+      } else if (testCases?.length) {
+        this.recording = recording || []
+        this.testCases = testCases
+        this.showResultsTab = true
+      } else if (recording?.length) {
+        await this.generateTestCases()
       }
     },
 
     storeState() {
       storage.set({
-        code: this.code,
-        codeForPlaywright: this.codeForPlaywright,
+        code: '',
+        codeForPlaywright: '',
+        testCases: this.testCases,
         controls: { isRecording: this.isRecording, isPaused: this.isPaused },
       })
     },
 
-    async copyCode() {
-      this.isCopying = true
-      await browser.copyToClipboard(this.getCode())
-      setTimeout(() => (this.isCopying = false), 500)
+    async exportExcel() {
+      if (!this.testCases.length) {
+        return
+      }
+
+      this.isExporting = true
+      exportTestCasesAsExcel(this.testCases, this.options?.testCase)
+      setTimeout(() => (this.isExporting = false), 500)
     },
 
     goHelp() {
@@ -256,18 +258,6 @@ export default {
     toggleDarkMode() {
       this.options.extension.darkMode = !this.options.extension.darkMode
       storage.set({ options: this.options })
-    },
-
-    getCode() {
-      return this.currentResultTab === 'puppeteer' ? this.code : this.codeForPlaywright
-    },
-
-    run() {
-      browser.openChecklyRunner({
-        code: this.getCode(),
-        runner: this.currentResultTab,
-        isLoggedIn: this.isLoggedIn,
-      })
     },
   },
 }

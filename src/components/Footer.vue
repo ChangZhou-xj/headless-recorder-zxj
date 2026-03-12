@@ -3,7 +3,7 @@
     <a href="https://checklyhq.com" target="_blank">
       <img src="/images/checkly-logo.svg" alt="Checkly logo" class="w-24" />
     </a>
-    <span class="text-gray-darkish">Version {{ version }}</span>
+    <span class="text-gray-darkish">版本 {{ version }}</span>
   </div>
 </template>
 

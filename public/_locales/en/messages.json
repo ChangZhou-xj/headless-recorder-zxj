@@ -1,6 +1,10 @@
 {
   "extName": {
-    "message": "headless-recorder-v2",
+    "message": "Test Case Recorder",
+    "description": ""
+  },
+  "extDescription": {
+    "message": "A Chrome extension for recording browser interactions, splitting test scenarios, and exporting test case spreadsheets.",
     "description": ""
   }
 }
