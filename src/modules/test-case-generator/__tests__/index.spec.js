@@ -122,4 +122,59 @@ describe('TestCaseGenerator', () => {
     expect(testData).toContain('姓名：张三')
     expect(testData).not.toContain('name-input')
   })
+
+  test('Element UI 图标和容器噪音被过滤，上溯成功的图标点击保留真实业务标签', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/main' },
+      { action: headlessActions.NAVIGATION },
+      // SVG use 图标（tagName=USE，应被过滤）
+      { action: 'click', selector: 'li.menu > span > svg > use', tagName: 'USE', label: '' },
+      // el-icon-arrow-down 上溯成功：_getElementLabel 已取到父菜单标题，label 为真实业务名
+      { action: 'click', selector: '.el-submenu__icon-arrow.el-icon-arrow-down', label: '绩效配置' },
+      // el-icon-arrow-right 上溯失败（父元素无文字），translateSelector 翻译为"展开箭头"，应被过滤
+      { action: 'click', selector: '.el-icon-arrow-right', label: '' },
+      // 侧边栏菜单容器（MENU_NOISE_LABELS 命中，应被过滤）
+      { action: 'click', selector: '.nav-menu ul.el-menu', label: '侧边栏菜单' },
+      // translateSelector fallback 的双引号 class 片段标签（应被过滤）
+      { action: 'click', selector: '.el-submenu__title', label: '"el submenu title"' },
+      // 真实菜单导航路径（应折叠为路径描述）
+      { action: 'click', selector: '.menu-item-1', label: '绩效管理' },
+      { action: 'click', selector: '.menu-item-2', label: '业务设置' },
+    ])
+
+    const steps = testCase['操作步骤']
+
+    // 噪音步骤不应出现
+    expect(steps).not.toContain('use')
+    expect(steps).not.toContain('展开箭头')
+    expect(steps).not.toContain('侧边栏菜单')
+    expect(steps).not.toContain('el submenu title')
+
+    // el-icon-arrow-down 上溯成功后标签为"绩效配置"，应保留
+    expect(steps).toContain('绩效配置')
+
+    // 连续菜单文字点击应折叠为路径
+    expect(steps).toContain('绩效管理 > 业务设置')
+  })
+
+  test('更多 Element UI 结构元素：折叠面板箭头、树节点展开图标、对话框关闭按钮均被过滤', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/page' },
+      { action: headlessActions.NAVIGATION },
+      // 折叠面板箭头（el-collapse-item__arrow，空 label + translateSelector = "折叠面板箭头"）
+      { action: 'click', selector: '.el-collapse-item__arrow', label: '' },
+      // 树节点展开图标（el-tree-node__expand-icon → "树节点展开图标"）
+      { action: 'click', selector: '.el-tree-node__expand-icon', label: '' },
+      // 对话框关闭按钮（el-dialog__headerbtn → "对话框关闭按钮"）
+      { action: 'click', selector: '.el-dialog__headerbtn', label: '' },
+      // 真正的业务操作
+      { action: 'click', selector: '.add-btn', label: '新增' },
+    ])
+
+    const steps = testCase['操作步骤']
+    expect(steps).not.toContain('折叠面板箭头')
+    expect(steps).not.toContain('树节点展开图标')
+    expect(steps).not.toContain('对话框关闭按钮')
+    expect(steps).toContain('新增')
+  })
 })

@@ -137,11 +137,12 @@ class Background {
     }
   }
 
-  recordNavigation() {
+  recordNavigation(href) {
     this.handleMessage({
       selector: undefined,
       value: undefined,
       action: headlessActions.NAVIGATION,
+      href: href || undefined,
     })
   }
 
@@ -294,12 +295,12 @@ class Background {
     }
   }
 
-  async handleNavigation({ frameId }) {
+  async handleNavigation({ frameId, url }) {
     await browser.injectContentScript()
     this.toggleOverlay({ open: true, pause: this._isPaused })
 
     if (frameId === 0) {
-      this.recordNavigation()
+      this.recordNavigation(url)
     }
   }
 

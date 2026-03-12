@@ -25,6 +25,9 @@ const CASE_TYPES = {
   FUNCTION: '功能',
   USABILITY: '易用性',
   PERFORMANCE: '功能/性能',
+  // 以下两个类型仅供内部拆分使用，最终输出时映射为对外展示类型
+  SMOKE: '正向', // 仅页面跳转/加载的冒烟场景，对外显示为"正向"
+  REGRESSION: '功能', // 截图比对回归场景，对外显示为"功能"
 }
 
 const INTERACTIVE_ACTIONS = ['click', 'dblclick', 'keydown', 'change', 'select', 'submit']
@@ -88,13 +91,31 @@ function translateSelector(selector = '') {
   // 通用 Element UI 按钮（最后匹配）
   if (/el-button|\.btn\b/.test(s)) return '按钮'
 
-  // ── 导航/菜单
+  // ── 导航/菜单 ── 结构性骨架（translateSelector 结果会被 MENU_NOISE_LABELS 过滤）
+  if (/el-icon-arrow-(?:right|down|left|up)|el-submenu__icon-arrow/.test(s)) return '展开箭头'
+  if (/el-collapse-item__arrow/.test(s)) return '折叠面板箭头'
+  if (/el-tree-node__expand-icon/.test(s)) return '树节点展开图标'
+  if (/el-table__expand-icon/.test(s)) return '表格展开图标'
+  // ── 导航/菜单 ── 业务元素（保留）
   if (/nav-menu-name|menu-name/.test(s)) return '菜单项'
-  if (/el-icon-arrow-right|icon.*arrow-right/.test(s)) return '展开箭头'
   if (/el-breadcrumb/.test(s)) return '面包屑导航'
   if (/el-tabs__item|tab-item/.test(s)) return '选项卡标签'
   if (/el-tabs|\.tabs/.test(s)) return '选项卡'
   if (/nav-menu|el-menu|side.*menu|sidebar/.test(s)) return '侧边栏菜单'
+
+  // ── 表单内部装饰槽（会被 MENU_NOISE_LABELS 过滤）
+  if (/el-input__(suffix|prefix|suffix-inner|prefix-inner)/.test(s)) return '输入框后缀'
+  if (/el-select__caret/.test(s)) return '下拉箭头'
+  if (/el-input__clear/.test(s)) return '清除按钮'
+
+  // ── 对话框 / 标签 结构元素（会被 MENU_NOISE_LABELS 过滤）
+  if (/el-dialog__headerbtn|el-dialog__close/.test(s)) return '对话框关闭按钮'
+  if (/el-tag__close/.test(s)) return '标签关闭按钮'
+
+  // ── 日期选择器导航箭头（会被 MENU_NOISE_LABELS 过滤）
+  if (/el-date-picker.*prev|el-picker.*prev-month|el-icon-d-arrow-left/.test(s)) return '日期前一月'
+  if (/el-date-picker.*next|el-picker.*next-month|el-icon-d-arrow-right/.test(s))
+    return '日期后一月'
 
   // ── 表格操作
   if (/el-table.*el-button|table.*(edit|delete|detail)/.test(s)) return '表格行操作按钮'
@@ -134,15 +155,162 @@ function translateSelector(selector = '') {
  * 去除连续重复的点击操作（同 action + 同 selector）。
  * 对应改进方向第 3 条：合并重复或无意义的操作。
  */
-function deduplicateEvents(events = []) {
-  return events.filter((event, index) => {
-    if (index === 0) return true
-    const prev = events[index - 1]
-    if (['click', 'dblclick'].includes(event.action)) {
-      return !(event.action === prev.action && event.selector === prev.selector)
+
+/**
+ * 已知的「噪音」标签——这些 label 代表 UI 骨架/装饰，而非业务动作，点击事件应被过滤。
+ * 主要来源：translateSelector 对 Element UI 内部结构元素的翻译结果。
+ * 当 _getElementLabel 上溯成功拿到真实业务标签时，这里不会命中，不影响有效事件。
+ */
+const MENU_NOISE_LABELS = new Set([
+  // 导航 / 菜单 骨架
+  '展开箭头',
+  '折叠箭头',
+  '侧边栏菜单',
+  '菜单项',
+  '导航菜单',
+  // 表单内部装饰
+  '输入框后缀',
+  '输入框前缀',
+  '下拉箭头',
+  '清除按钮',
+  // 折叠面板 / 树 / 表格 结构
+  '折叠面板箭头',
+  '树节点展开图标',
+  '表格展开图标',
+  // 对话框 / 标签 关闭按钮
+  '对话框关闭按钮',
+  '标签关闭按钮',
+  // 日期选择器导航箭头
+  '日期前一月',
+  '日期后一月',
+  '日期前一年',
+  '日期后一年',
+])
+
+/** SVG 图标相关的 tagName（大写）*/
+const SVG_TAG_NAMES = new Set([
+  'SVG',
+  'USE',
+  'PATH',
+  'CIRCLE',
+  'RECT',
+  'POLYGON',
+  'POLYLINE',
+  'ELLIPSE',
+  'LINE',
+  'G',
+  'SYMBOL',
+  'DEFS',
+])
+
+/**
+ * 判断一个事件是否有业务意义——过滤 SVG 图标点击、纯容器菜单点击等噪音事件。
+ * 只对 click / dblclick 做过滤，其他事件类型（GOTO、NAVIGATION、SCREENSHOT 等）直接保留。
+ *
+ * 与录制层协作逻辑：
+ *   - _getElementLabel 对 el-icon-* 等图标元素会向上溯源取真实业务标签；
+ *     上溯成功 → label 有业务意义 → 此函数保留该事件；
+ *     上溯失败 → label 为空 → resolveLabel 用 translateSelector 兜底生成结构性标签
+ *               （如"展开箭头"）→ MENU_NOISE_LABELS 过滤。
+ */
+function isMeaningfulEvent(event) {
+  // 非点击事件（GOTO、VIEWPORT、NAVIGATION、SCREENSHOT 等）直接保留
+  if (!['click', 'dblclick'].includes(event.action)) return true
+
+  // 按 tagName 过滤 SVG 图标元素（Recorder 已在 payload 中携带 tagName）
+  if (event.tagName && SVG_TAG_NAMES.has(event.tagName.toUpperCase())) return false
+
+  const label = resolveLabel(event)
+
+  // 空标签 / SVG fallback 的 "use" 标签
+  if (!label || label === '"use"' || label === 'use') return false
+
+  // 已知噪音标签（结构性 Element UI 元素翻译结果）
+  if (MENU_NOISE_LABELS.has(label)) return false
+
+  // translateSelector fallback 会把未知 class 名用双引号包裹，如 "el submenu title"
+  // 这类标签仅由 CSS class 片段拼凑，不具备业务语义，统一过滤
+  if (/^"[a-z][\w\s-]{2,}"$/.test(label)) return false
+
+  return true
+}
+
+/**
+ * 检测连续 click 事件是否构成菜单导航路径。
+ * 菜单路径特征：每个 label 都是 ≤12 字的纯中文短语，且数量 ≥ 2。
+ * 满足条件时合并为单一的 { _menuPath: string[] } 描述事件。
+ */
+function collapseMenuPath(events = []) {
+  const result = []
+  let i = 0
+
+  while (i < events.length) {
+    const event = events[i]
+
+    if (event.action === 'click') {
+      // 搜集连续 click 事件
+      const run = [event]
+      let j = i + 1
+      while (j < events.length && events[j].action === 'click') {
+        run.push(events[j])
+        j++
+      }
+
+      if (run.length >= 2) {
+        const labels = run.map(e => resolveLabel(e))
+        // 判断是否为菜单导航路径：每段都是 ≤12 字的中文短语
+        const isMenuNav = labels.every(
+          l => l && /^[\u4e00-\u9fa5\w·（）()]{1,12}$/.test(l.replace(/^"|"$/g, ''))
+        )
+
+        if (isMenuNav) {
+          // 合并为单条菜单导航事件
+          result.push({ ...event, _menuPath: labels })
+          i = j
+          continue
+        }
+      }
     }
+
+    result.push(event)
+    i++
+  }
+
+  return result
+}
+
+function deduplicateEvents(events = []) {
+  // Step 1：过滤 SVG 图标点击 / 已知噪音容器点击
+  const meaningful = events.filter(isMeaningfulEvent)
+
+  // Step 2：去除连续重复（同 action + 同 selector 或 同 label）
+  const deduped = meaningful.filter((event, index) => {
+    if (index === 0) return true
+    const prev = meaningful[index - 1]
+    if (['click', 'dblclick'].includes(event.action)) {
+      if (event.action === prev.action && event.selector === prev.selector) return false
+      // 同 label 的相邻点击（冒泡到不同祖先节点时产生）也归为重复
+      const label = resolveLabel(event)
+      const prevLabel = resolveLabel(prev)
+      if (event.action === prev.action && label && label === prevLabel) return false
+    }
+
+    // 对同一输入框的多次 keydown/change，只保留最后一次（最终输入值）。
+    // 场景：用户逐字输入"指标解释XX" → 回删至"指标解释X" → 下拉选择"指标解释"，
+    //   三次事件均指向同一 selector，只需保留末尾的 change/keydown 即可。
+    // 实现：向后预读——若紧随其后还有相同 selector 的 keydown/change，则跳过当前事件。
+    if (['keydown', 'change'].includes(event.action)) {
+      const next = meaningful[index + 1]
+      if (next && ['keydown', 'change'].includes(next.action) && next.selector === event.selector) {
+        return false // 当前不是最终值，跳过
+      }
+    }
+
     return true
   })
+
+  // Step 3：将连续的菜单文字点击折叠为一条路径描述
+  return collapseMenuPath(deduped)
 }
 
 function getPageFeature(recording = []) {
@@ -264,6 +432,32 @@ function getCaseType(events = [], fallback = DEFAULT_CASE_TYPE) {
     return CASE_TYPES.BOUNDARY
   }
 
+  // ── 异常场景识别 ──────────────────────────────────────────────────────────
+  // 0. 录制到了错误/警告级别的系统通知（el-message error/warning）
+  if (
+    events.some(
+      e => e.action === headlessActions.NOTICE && ['error', 'warning'].includes(e.noticeType)
+    )
+  ) {
+    return CASE_TYPES.EXCEPTION
+  }
+  // 1. 标签/值中含有明确的错误/失败语义
+  if (/错误|失败|异常|invalid|forbidden|error|exception|timeout|超时/.test(selectors)) {
+    return CASE_TYPES.EXCEPTION
+  }
+  // 2. 提交类按钮点击后无页面跳转（NAVIGATION）
+  //    → 推断为校验拦截或接口异常（表单留在当前页 = 操作未成功）
+  const hasSubmitClick = events.some(event => {
+    if (event.action !== 'click') return false
+    const label = (event.label || resolveLabel(event)).toLowerCase()
+    return /保存|提交|确认|确定|登录|新增|创建|发布|审核/.test(label)
+  })
+  const hasNavigation = events.some(event => isNavigationAction(event.action))
+  if (hasSubmitClick && !hasNavigation) {
+    return CASE_TYPES.EXCEPTION
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   // 包含表单输入/选择 → 功能用例
   if (
     events.some(event =>
@@ -276,23 +470,46 @@ function getCaseType(events = [], fallback = DEFAULT_CASE_TYPE) {
   return fallback
 }
 
+function tryGetPathname(href) {
+  if (!href) return null
+  try {
+    return new URL(href).pathname
+  } catch (_) {
+    return null
+  }
+}
+
 function splitRecordingByPage(recording = []) {
   const groups = []
   let current = []
+  let currentPathname = null
 
   recording.forEach(event => {
-    if (event.action === headlessActions.GOTO && current.length > 0) {
-      groups.push(current)
+    // 显式页面导航（硬刷新 / 新 Tab）→ 直接分组
+    if (event.action === headlessActions.GOTO) {
+      if (current.length > 0) groups.push(current)
       current = [event]
+      currentPathname = tryGetPathname(event.href)
       return
+    }
+
+    // SPA 路由跳转：NAVIGATION 携带了不同 pathname → 视为新页面分组
+    // 典型场景：/login 提交后跳转至 /dashboard
+    if (event.action === headlessActions.NAVIGATION && event.href) {
+      const newPathname = tryGetPathname(event.href)
+      if (newPathname && currentPathname && newPathname !== currentPathname) {
+        if (current.length > 0) groups.push(current)
+        // 用路由跳转后的真实地址合成一条 GOTO，供后续场景名称提取使用
+        current = [{ action: headlessActions.GOTO, href: event.href }]
+        currentPathname = newPathname
+        return // NAVIGATION 本身不再追加到 current
+      }
     }
 
     current.push(event)
   })
 
-  if (current.length > 0) {
-    groups.push(current)
-  }
+  if (current.length > 0) groups.push(current)
 
   return groups
 }
@@ -340,12 +557,34 @@ function splitPageScenarios(pageEvents = []) {
     if (isInteractiveAction(event.action) || isNavigationAction(event.action)) {
       current.push(event)
 
-      if (
-        isNavigationAction(event.action) &&
-        current.some(item => isInteractiveAction(item.action))
-      ) {
+      // ── 分割触发条件 1：路由跳转/页面加载（NAVIGATION）
+      //    只要 current 里已积累了至少一个事件就拆分，覆盖：
+      //    a. 传统 MPA 跳转（表单提交 + 新页面）
+      //    b. SPA 登录后路由变化（/login → /dashboard）
+      if (isNavigationAction(event.action) && current.length > 1) {
         scenarios.push({ type: getCaseType(current), events: current })
         current = []
+        continue
+      }
+
+      // ── 分割触发条件 2：SPA 表单提交模式——提交类按钮点击后无 NAVIGATION，
+      //    但后续还有新的交互（说明弹窗关闭 / 路由切换，进入下一个独立业务场景）
+      //    检测：当前为提交/保存/确定/登录类点击，且下一个事件也是交互型（新场景开始）
+      if (event.action === 'click' && current.some(item => isInteractiveAction(item.action))) {
+        const label = resolveLabel(event)
+        // eslint-disable-next-line max-len
+        const isSubmitLikeAction = /^(保存|提交|确认|确定|发布|审核|新增|创建|添加|完成|登录|退出登录|注销)$/.test(
+          label
+        )
+        if (isSubmitLikeAction) {
+          const nextEvent = pageEvents[i + 1]
+          const nextIsInteractive = nextEvent && isInteractiveAction(nextEvent.action)
+          const nextIsNotNav = !nextEvent || !isNavigationAction(nextEvent.action)
+          if (nextIsInteractive && nextIsNotNav) {
+            scenarios.push({ type: getCaseType(current), events: current })
+            current = []
+          }
+        }
       }
     }
   }
@@ -382,6 +621,12 @@ function getPrecondition(recording = [], caseType = DEFAULT_CASE_TYPE) {
 
 function getEventActionText(event = {}) {
   const { action, value, href } = event
+
+  // 菜单导航路径（由 collapseMenuPath 合并而来）
+  if (event._menuPath) {
+    return `点击菜单导航：${event._menuPath.join(' > ')}`
+  }
+
   // resolveLabel 优先用录制时采集的真实标签，降级才用选择器翻译
   const label = resolveLabel(event)
   const labelStr = label ? `"${label}"` : '该元素'
@@ -411,11 +656,25 @@ function getEventExpectationText(event = {}, caseType = DEFAULT_CASE_TYPE) {
   // 优先使用录制时的真实标签
   const label = resolveLabel(event)
 
+  // 菜单导航路径的预期：进入最终目标功能模块
+  if (event._menuPath) {
+    const target = event._menuPath[event._menuPath.length - 1]
+    return `成功进入"${target}"功能模块页面`
+  }
+
   switch (action) {
     case headlessActions.GOTO:
       return `成功打开页面，地址为 ${href}`
     case headlessActions.VIEWPORT:
       return `浏览器窗口尺寸调整为 ${event?.value?.width || 0} × ${event?.value?.height || 0}`
+    case headlessActions.NOTICE: {
+      // 录制时由 MutationObserver 捕获的系统通知（el-message / el-notification / el-alert）
+      const typeLabel =
+        { success: '成功消息', error: '错误消息', warning: '警告消息', info: '提示消息' }[
+          event.noticeType
+        ] || '消息提示'
+      return `页面弹出${typeLabel}（el-message）：「${event.value || ''}」`
+    }
     case 'click': {
       // 根据真实标签给出具体预期，对应改进方向第 4 条
       if (/退出登录/.test(label)) return '退出成功，跳转到登录页'
@@ -427,7 +686,19 @@ function getEventExpectationText(event = {}, caseType = DEFAULT_CASE_TYPE) {
       if (/搜索按钮/.test(label)) return '列表按输入条件筛选并刷新结果'
       if (/导出按钮/.test(label)) return '触发文件下载，文件内容与列表数据一致'
       if (/导入\/上传按钮/.test(label)) return '导入任务提交成功，系统给出成功提示'
-      if (/保存按钮/.test(label)) return '数据保存成功，列表中可查看到最新记录'
+      if (/保存按钮/.test(label)) {
+        // 异常用例：保存按钮点击 + 无跳转 → 接口失败/校验失败预期
+        if (caseType === CASE_TYPES.EXCEPTION) {
+          return '页面给出错误提示（如"保存失败，请稍后重试"），表单数据不丢失，错误信息不暴露接口详情'
+        }
+        return '数据保存成功，列表中可查看到最新记录'
+      }
+      if (/^(保存|提交|确认|确定|发布|审核)$/.test(label)) {
+        if (caseType === CASE_TYPES.EXCEPTION) {
+          return `操作失败，页面给出明确错误提示，不暴露接口错误详情或堆栈信息，表单数据不丢失`
+        }
+        return `操作成功，页面给出成功提示`
+      }
       if (/展开箭头/.test(label)) return '菜单展开，显示子菜单项'
       if (/菜单项/.test(label)) return '进入对应功能模块页面'
       if (/选项卡/.test(label)) return '切换至对应选项卡内容'
@@ -494,9 +765,42 @@ function getTestData(recording = []) {
   return Array.from(new Set(rows)).join('；') || '无特殊测试数据'
 }
 
+/**
+ * 步骤级别的事件过滤：只保留人工测试步骤中有意义的操作。
+ * - VIEWPORT（设置窗口尺寸）：自动化配置细节，人工执行不需要
+ * - NAVIGATION（等待页面加载）：人工测试隐含步骤，无需显式列出
+ * - 连续多个 GOTO：只保留首个（同一场景内页面已确定，后续跳转另起场景）
+ */
+function isHumanStep(event, index, arr) {
+  if (event.action === headlessActions.VIEWPORT) return false
+  if (event.action === headlessActions.NAVIGATION) return false
+  // NOTICE 是系统弹出的通知，属于"预期结果"而非"操作步骤"
+  if (event.action === headlessActions.NOTICE) return false
+  // GOTO 只保留场景内第一次出现（去掉因冒泡等产生的重复 GOTO）
+  if (event.action === headlessActions.GOTO) {
+    return arr.findIndex(e => e.action === headlessActions.GOTO) === index
+  }
+  return true
+}
+
+/**
+ * 预期结果级别的事件过滤：比 isHumanStep 多保留 NOTICE（系统通知是预期结果的重要来源）。
+ * - VIEWPORT / NAVIGATION：同样排除
+ * - NOTICE：保留（用于生成"页面弹出 xxx 消息"的预期文本）
+ */
+function isExpectationRelevant(event, index, arr) {
+  if (event.action === headlessActions.VIEWPORT) return false
+  if (event.action === headlessActions.NAVIGATION) return false
+  if (event.action === headlessActions.GOTO) {
+    return arr.findIndex(e => e.action === headlessActions.GOTO) === index
+  }
+  return true
+}
+
 function buildSteps(recording = []) {
-  // 先去除连续重复点击，再生成步骤（改进方向第 3 条）
+  // 先去除连续重复点击，再过滤自动化细节，最后生成步骤
   const rows = deduplicateEvents(recording)
+    .filter(isHumanStep)
     .map(getEventActionText)
     .filter(Boolean)
     .map((text, index) => `${index + 1}. ${text}`)
@@ -505,8 +809,9 @@ function buildSteps(recording = []) {
 }
 
 function buildExpectations(recording = [], caseType = DEFAULT_CASE_TYPE) {
-  // 先去重，再取预期——与 buildSteps 保持一致（改进方向第 3 条）
+  // 先去重，再过滤（保留 NOTICE，过滤 VIEWPORT/NAVIGATION），最后取预期
   const stepExpectations = deduplicateEvents(recording)
+    .filter(isExpectationRelevant)
     .map(event => getEventExpectationText(event, caseType))
     .filter(Boolean)
 

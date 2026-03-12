@@ -54,4 +54,4 @@ if (Array.isArray(manifest.web_accessible_resources)) {
 }
 
 fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
-console.log('已将 dist/manifest.json 修正为 Manifest V3 格式')
+console.log(`已将 dist/manifest.json 修正为 Manifest V3 格式 (${new Date().toLocaleString()})`)
