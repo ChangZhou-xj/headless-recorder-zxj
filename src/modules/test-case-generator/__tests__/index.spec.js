@@ -347,6 +347,36 @@ describe('TestCaseGenerator', () => {
     expect(dashboardRow['前置条件']).toContain('已具备进入"绩效配置"功能模块的访问权限')
   })
 
+  test('iframe 内点击下一步后触发的路由变化，不会丢失后续步骤', () => {
+    const generator = new TestCaseGenerator()
+    const rows = generator.generate([
+      { action: headlessActions.GOTO, href: 'https://example.com/form' },
+      { action: 'click', selector: '.iframe-step-next', label: '下一步', frameId: 2 },
+      {
+        action: headlessActions.NAVIGATION,
+        href: 'https://example.com/form/step-2',
+        frameId: 2,
+      },
+      { action: 'keydown', selector: '#mobile', value: '13800138000', label: '手机号', frameId: 2 },
+      { action: 'click', selector: '.submit-btn', label: '提交', frameId: 2 },
+    ])
+
+    const nextRow = rows.find(
+      row => row['功能'] && row['功能'].includes('/form') && row['操作步骤'].includes('下一步')
+    )
+    const stepTwoRow = rows.find(
+      row => row['功能'] && row['功能'].includes('/form/step-2') && row['操作步骤'].includes('手机号')
+    )
+
+    expect(nextRow).toBeTruthy()
+    expect(nextRow['操作步骤']).toContain('点击"下一步"')
+
+    expect(stepTwoRow).toBeTruthy()
+    expect(stepTwoRow['操作步骤']).toContain('在"手机号"中输入"13800138000"')
+    expect(stepTwoRow['操作步骤']).toContain('点击"提交"')
+    expect(stepTwoRow['测试数据']).toContain('手机号：13800138000')
+  })
+
   test('截图场景会生成更具体的标题和前置条件文案', () => {
     const testCase = buildTestCase([
       { action: headlessActions.GOTO, href: 'https://example.com/report' },

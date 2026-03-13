@@ -791,8 +791,7 @@ function getCaseType(events = [], fallback = DEFAULT_CASE_TYPE) {
   //    → 推断为校验拦截或接口异常（表单留在当前页 = 操作未成功）
   const hasSubmitClick = events.some(event => {
     if (event.action !== 'click') return false
-    const label = (event.label || resolveLabel(event)).toLowerCase()
-    return /保存|提交|确认|确定|登录|发布|审核|完成/.test(label)
+    return isSubmitLikeLabel(event.label || resolveLabel(event))
   })
   const hasNavigation = events.some(event => isNavigationAction(event.action))
   const hasSuccessNotice = events.some(
