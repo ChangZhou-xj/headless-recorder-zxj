@@ -308,7 +308,7 @@ const ACTION_BUTTON_LABELS = new Set([
 const PRIVATE_USE_ICON_LABEL = /^[\uE000-\uF8FF]+$/
 
 function normalizeTextLabel(text = '') {
-  return `${text}`
+  return String(text)
     .trim()
     .replace(/^"+|"+$/g, '')
     .replace(/\s+/g, ' ')
