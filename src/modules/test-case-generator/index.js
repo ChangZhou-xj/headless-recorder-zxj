@@ -32,6 +32,54 @@ const CASE_TYPES = {
 
 const INTERACTIVE_ACTIONS = ['click', 'dblclick', 'keydown', 'change', 'select', 'submit']
 
+/**
+ * 表单类型分组——与业务侧 FORM_TYPE 常量对齐。
+ * 用于在 getEventActionText / getEventExpectationText 中选择正确的动词。
+ */
+/** 文本输入类：用「输入」动词 */
+const INPUT_FORM_TYPES = new Set(['input', 'formatInput', 'textarea'])
+/** 日期/时间选择类：用「选择日期/时间」 */
+const DATE_FORM_TYPES = new Set([
+  'date',
+  'dateTime',
+  'dateTimeSeconds',
+  'month',
+  'dateRange',
+  'time',
+  'time_second',
+  'date_time_minute',
+])
+/** 下拉/枚举选择类：用「选择」 */
+const SELECT_FORM_TYPES = new Set([
+  'select',
+  'radio',
+  'checkbox',
+  'tree',
+  'selectInput',
+  'selectFollower',
+  'areaSelect',
+  'bankInput',
+])
+
+/**
+ * 根据 formType 推导操作语义动词：
+ *   'input'  → 文本输入
+ *   'date'   → 日期/时间选择
+ *   'select' → 枚举/下拉选择
+ *   'switch' → 开关切换
+ *   'file'   → 文件上传
+ *   null     → 未知，由调用方决定 fallback
+ */
+function getFormVerb(formType = '') {
+  if (!formType) return null
+  if (INPUT_FORM_TYPES.has(formType)) return 'input'
+  if (DATE_FORM_TYPES.has(formType)) return 'date'
+  if (SELECT_FORM_TYPES.has(formType)) return 'select'
+  if (formType === 'switch') return 'switch'
+  if (formType === 'file') return 'file'
+  return 'select' // 未知类型默认「选择」
+}
+
 function isNavigationAction(action) {
   return action === headlessActions.NAVIGATION
 }
@@ -185,6 +233,42 @@ const MENU_NOISE_LABELS = new Set([
   '日期后一月',
   '日期前一年',
   '日期后一年',
+  // 通用弹窗容器——点击弹窗背景/容器本身不是有意义的业务动作
+  '弹窗',
+])
+
+/**
+ * 通用表单控件标签集合——这些 label 仅描述控件类型，不含具体业务语义。
+ * 当 click 事件的 label 落在此集合中，且下一个事件是任意交互型操作时，
+ * 该 click 视为「打开控件入口」，在操作步骤中省略（避免重复冗余步骤）。
+ * 典型场景：录制时 click 落在 .el-input 外层容器，change/keydown 落在 .el-input__inner
+ * 内层，selector 不同，原有的"同 selector 过滤"无法命中。
+ */
+const GENERIC_FORM_CLICK_LABELS = new Set([
+  '输入框',
+  '文本域',
+  '金额输入框',
+  '下拉选择框',
+  '级联选择框',
+  '日期/时间选择',
+  '日期选择',
+  '日期时间选择',
+  '日期时间选择（带时分秒）',
+  '月份选择',
+  '日期范围选择',
+  '时分选择',
+  '时分秒选择',
+  '年月日时分选择',
+  '单选框',
+  '复选框',
+  '开关',
+  '树形选择框',
+  '输入选择框',
+  '文件上传控件',
+  '文件上传框',
+  '区划选择框',
+  '银行选择框',
+  '同行人选择框',
 ])
 
 /** SVG 图标相关的 tagName（大写）*/
@@ -327,7 +411,64 @@ function normalizePlaceholderLabel(label = '') {
     .trim()
 }
 
-function inferGenericFieldLabel(selector = '', action = '') {
+/**
+ * 根据 formType 返回控件类型后缀（用于拼接 placeholder）。
+ * 例：formType='textarea' → '文本域'，拼接后形如「备注文本域」。
+ * 没有对应类型时返回空字符串，不拼接。
+ */
+function getFormTypeSuffix(formType = '') {
+  if (!formType) return ''
+  if (formType === 'textarea') return '文本域'
+  if (formType === 'formatInput') return '金额输入框'
+  if (formType === 'input') return '输入框'
+  if (formType === 'date') return '日期选择'
+  if (formType === 'dateTime') return '日期时间选择'
+  if (formType === 'dateTimeSeconds') return '日期时间选择（带时分秒）'
+  if (formType === 'month') return '月份选择'
+  if (formType === 'dateRange') return '日期范围选择'
+  if (formType === 'time') return '时分选择'
+  if (formType === 'time_second') return '时分秒选择'
+  if (formType === 'date_time_minute') return '年月日时分选择'
+  if (formType === 'select') return '下拉选择框'
+  if (formType === 'radio') return '单选框'
+  if (formType === 'checkbox') return '复选框'
+  if (formType === 'switch') return '开关'
+  if (formType === 'tree') return '树形选择框'
+  if (formType === 'selectInput') return '输入选择框'
+  if (formType === 'file') return '文件上传框'
+  if (formType === 'areaSelect') return '区划选择框'
+  if (formType === 'bankInput') return '银行选择框'
+  if (formType === 'selectFollower') return '同行人选择框'
+  return ''
+}
+
+function inferGenericFieldLabel(selector = '', action = '', formType = '') {
+  // ── 优先用 formType 推断控件标签（录制层已注入时最准确）
+  if (formType) {
+    if (formType === 'textarea') return '文本域'
+    if (formType === 'formatInput') return '金额输入框'
+    if (formType === 'input') return '输入框'
+    if (formType === 'date') return '日期选择'
+    if (formType === 'dateTime') return '日期时间选择'
+    if (formType === 'dateTimeSeconds') return '日期时间选择（带时分秒）'
+    if (formType === 'month') return '月份选择'
+    if (formType === 'dateRange') return '日期范围选择'
+    if (formType === 'time') return '时分选择'
+    if (formType === 'time_second') return '时分秒选择'
+    if (formType === 'date_time_minute') return '年月日时分选择'
+    if (formType === 'select') return '下拉选择框'
+    if (formType === 'radio') return '单选框'
+    if (formType === 'checkbox') return '复选框'
+    if (formType === 'switch') return '开关'
+    if (formType === 'tree') return '树形选择框'
+    if (formType === 'selectInput') return '输入选择框'
+    if (formType === 'file') return '文件上传框'
+    if (formType === 'areaSelect') return '区划选择框'
+    if (formType === 'bankInput') return '银行选择框'
+    if (formType === 'selectFollower') return '同行人选择框'
+  }
+
+  // ── 降级：按 selector 模式匹配
   const s = (selector || '').toLowerCase()
 
   if (/uni[-\s_]*textarea|\btextarea\b/.test(s)) return '文本域'
@@ -348,9 +489,27 @@ function isGenericInputLabel(label = '') {
 
 function getInputLikeLabel(event = {}) {
   const label = normalizePlaceholderLabel(resolveLabel(event))
-  if (label && !PRIVATE_USE_ICON_LABEL.test(label) && !isGenericInputLabel(label)) return label
+  const typeSuffix = getFormTypeSuffix(event.formType)
 
-  const generic = inferGenericFieldLabel(event.selector, event.action)
+  // 有 placeholder 文本 → 拼接「placeholder + 类型后缀」，如「报销金额输入框」「备注文本域」
+  // 使用重叠去重：label 结尾与 typeSuffix 开头若有重叠则合并，避免「报销金额金额输入框」
+  if (label && !PRIVATE_USE_ICON_LABEL.test(label) && !isGenericInputLabel(label)) {
+    if (typeSuffix) {
+      // 找 label 末尾与 typeSuffix 开头的最长公共子串，去重后拼接
+      let overlap = 0
+      for (let i = Math.min(label.length, typeSuffix.length); i > 0; i--) {
+        if (label.endsWith(typeSuffix.slice(0, i))) {
+          overlap = i
+          break
+        }
+      }
+      return label + typeSuffix.slice(overlap)
+    }
+    return label
+  }
+
+  // 无 placeholder → 降级用类型推断标签（如「文本域」「日期时间选择」）
+  const generic = inferGenericFieldLabel(event.selector, event.action, event.formType)
   if (generic) return generic
 
   return normalizeTextLabel(translateSelector(event.selector || ''))
@@ -782,15 +941,51 @@ function getEventActionText(event = {}) {
       return `打开页面：${href}`
     case headlessActions.VIEWPORT:
       return `设置浏览器窗口大小为 ${value?.width || 0} × ${value?.height || 0}`
-    case 'click':
+    case 'click': {
+      // 点击日期/选择类字段时，补充语义提示（录制层已注入 formType 时生效）
+      const clickVerb = getFormVerb(event.formType)
+      if (clickVerb === 'date') return `点击${labelStr}（打开日期选择）`
+      if (clickVerb === 'select') return `点击${labelStr}（展开选择）`
+      if (clickVerb === 'file') return `点击${labelStr}（选择文件）`
       return `点击${labelStr}`
+    }
     case 'keydown':
       return value ? `在${labelStr}中输入"${value}"` : `在${labelStr}中进行输入操作`
-    case 'change':
+    case 'change': {
+      // switch 翻转状态
+      if (event.formType === 'switch') {
+        return event.checked !== false ? `开启${labelStr}` : `关闭${labelStr}`
+      }
+      // checkbox / radio：勾选状态
       if (event.checked !== undefined) {
         return event.checked ? `勾选${labelStr}` : `取消勾选${labelStr}`
       }
-      return `在${labelStr}中选择"${value}"`
+      // file 上传
+      if (event.formType === 'file') {
+        return value ? `上传文件至${labelStr}：「${value}」` : `选择并上传文件至${labelStr}`
+      }
+      // 文本输入类（INPUT / TEXTAREA / FORMAT_INPUT）：用「输入」
+      const changeVerb = getFormVerb(event.formType)
+      if (changeVerb === 'input') {
+        return value ? `在${labelStr}中输入"${value}"` : `在${labelStr}中进行输入操作`
+      }
+      // 日期/时间类：用「选择日期/时间」
+      if (changeVerb === 'date') {
+        return value ? `在${labelStr}中选择"${value}"` : `在${labelStr}中选择日期/时间`
+      }
+      // 其余（SELECT / RADIO / TREE 等）：用「选择」
+      // 无 formType 时：从已解析的 label 推断——label 以「输入框/文本域」结尾 → 文本输入
+      if (!event.formType) {
+        const guessLabel = getInputLikeLabel(event)
+        if (/输入框$|文本域$/.test(guessLabel)) {
+          return value ? `在${labelStr}中输入"${value}"` : `在${labelStr}中进行输入操作`
+        }
+        if (/日期|时间|月份/.test(guessLabel)) {
+          return value ? `在${labelStr}中选择"${value}"` : `在${labelStr}中选择日期/时间`
+        }
+      }
+      return value ? `在${labelStr}中选择"${value}"` : `在${labelStr}中进行选择操作`
+    }
     case headlessActions.NAVIGATION:
       return '等待页面加载完成'
     case headlessActions.SCREENSHOT:
@@ -859,14 +1054,43 @@ function getEventExpectationText(event = {}, caseType = DEFAULT_CASE_TYPE) {
     }
     case 'keydown':
       return `"${label || '输入框'}"成功录入"${value || '操作内容'}"`
-    case 'change':
-      // checkbox / radio：使用勾选/取消语义
+    case 'change': {
+      // switch 翻转
+      if (event.formType === 'switch') {
+        return event.checked !== false ? `"${label || '开关'}"已开启` : `"${label || '开关'}"已关闭`
+      }
+      // checkbox / radio：勾选语义
       if (event.checked !== undefined) {
         return event.checked
           ? `"${label || '复选框'}"勾选成功`
           : `"${label || '复选框'}"取消勾选成功`
       }
+      // file 上传
+      if (event.formType === 'file') {
+        return `文件已选择并成功上传至"${label || '文件上传框'}"`
+      }
+      // 文本输入类：录入成功
+      const expVerb = getFormVerb(event.formType)
+      if (expVerb === 'input') {
+        return `"${label || '输入框'}"成功录入"${value || '操作内容'}"`
+      }
+      // 日期类
+      if (expVerb === 'date') {
+        return `"${label || '日期选择'}"已选中日期"${value}"`
+      }
+      // 其余选择类
+      // 无 formType 时：从 label 推断，避免把文本输入误描述为「选中」
+      if (!event.formType) {
+        const guessLabel = getInputLikeLabel(event)
+        if (/输入框$|文本域$/.test(guessLabel)) {
+          return `"${label || '输入框'}"成功录入"${value || '操作内容'}"`
+        }
+        if (/日期|时间|月份/.test(guessLabel)) {
+          return `"${label || '日期选择'}"已选中日期"${value}"`
+        }
+      }
       return `"${label || '下拉框'}"成功选中"${value}"`
+    }
     case headlessActions.NAVIGATION:
       return '页面跳转并加载成功'
     case headlessActions.SCREENSHOT:
@@ -922,15 +1146,41 @@ function isHumanStep(event, index, arr) {
   if (event.action === headlessActions.NAVIGATION) return false
   // NOTICE 是系统弹出的通知，属于"预期结果"而非"操作步骤"
   if (event.action === headlessActions.NOTICE) return false
-  // 点击输入框后立刻在同一元素输入/选择，仅保留真正的表单操作，避免重复步骤
+  // 过滤「打开控件入口」click：
+  //   a. 同 selector：click → keydown/change（内层 selector 相同）
+  //   b. 不同 selector：click 的 label 是通用控件类型标签（如「输入框」「日期选择」），
+  //      且下一个事件是交互型操作 → 该 click 仅为打开控件的入口，省略
+  //   c. 录制层已注入 formType 的选择/日期类控件：click 后接 change，省略 click
   if (event.action === 'click') {
     const next = arr[index + 1]
+    // case a：同 selector 相邻 click → keydown/change
     if (
       next &&
       ['keydown', 'change'].includes(next.action) &&
       event.selector &&
       next.selector &&
       event.selector === next.selector
+    ) {
+      return false
+    }
+    // case b：label 是通用控件类型标签 → 省略（下一步是任意交互操作时）
+    if (next && isInteractiveAction(next.action)) {
+      const clickLabel = normalizeTextLabel(resolveLabel(event))
+      if (GENERIC_FORM_CLICK_LABELS.has(clickLabel)) return false
+      // label 含类型后缀（如「备注输入框」「单位下拉选择框」）也属于控件入口，省略
+      if (
+        [...GENERIC_FORM_CLICK_LABELS].some(
+          suffix => clickLabel.endsWith(suffix) && clickLabel !== suffix
+        )
+      )
+        return false
+    }
+    // case c：formType 标注的选择/日期类控件，click 后接 change
+    if (
+      event.formType &&
+      (SELECT_FORM_TYPES.has(event.formType) || DATE_FORM_TYPES.has(event.formType)) &&
+      next &&
+      next.action === 'change'
     ) {
       return false
     }
