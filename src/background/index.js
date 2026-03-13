@@ -19,6 +19,9 @@ class Background {
     this._badgeState = ''
     this._isPaused = false
 
+    // 当前正在录制的 tab ID，用于过滤 webNavigation 事件和注入目标
+    this._recordingTabId = null
+
     this._menuId = 'PUPPETEER_RECORDER_CONTEXT_MENU'
     this._boundedMenuHandler = null
 
@@ -47,12 +50,22 @@ class Background {
     this._hasGoto = false
     this._hasViewPort = false
 
+    // 记录当前录制的 tab，后续所有帧操作都基于此 ID
+    const tab = await browser.getActiveTab()
+    this._recordingTabId = tab?.id || null
+
     await browser.injectContentScript()
     this.toggleOverlay({ open: true, clear: true })
 
     this._boundedMessageHandler = this.handleMessage.bind(this)
     this._boundedNavigationHandler = this.handleNavigation.bind(this)
-    this._boundedWaitHandler = () => badge.wait()
+    // 仅在主框架（frameId === 0）导航时显示 wait 状态；
+    // iframe 子帧的导航不应影响整体录制状态，否则 iframe 加载会让插件卡在 "wait"。
+    this._boundedWaitHandler = ({ frameId, tabId }) => {
+      if (frameId === 0 && (!this._recordingTabId || tabId === this._recordingTabId)) {
+        badge.wait()
+      }
+    }
 
     this.overlayHandler = this.handleOverlayMessage.bind(this)
 
@@ -159,6 +172,7 @@ class Background {
 
   handleMessage(msg, sender) {
     if (msg.control) {
+      // 将 sender 一并传递，供 handleRecordingMessage 中的 INJECT_ALL_FRAMES 使用
       return this.handleRecordingMessage(msg, sender)
     }
 
@@ -241,7 +255,7 @@ class Background {
     }
   }
 
-  handleRecordingMessage({ control, href, value, coordinates }) {
+  handleRecordingMessage({ control, href, value, coordinates }, sender) {
     if (control === recordingControls.EVENT_RECORDER_STARTED) {
       badge.setText(this._badgeState)
     }
@@ -257,6 +271,14 @@ class Background {
     if (control === recordingControls.GET_SCREENSHOT) {
       this.recordScreenshot(value)
     }
+
+    // 内容脚本检测到页面新增 iframe，请求将 content script 重新注入到该 tab 的所有帧
+    if (control === recordingControls.INJECT_ALL_FRAMES) {
+      const tabId = sender?.tab?.id
+      if (tabId) {
+        browser.injectContentScriptIntoTab(tabId)
+      }
+    }
   }
 
   handlePopupMessage(msg) {
@@ -269,7 +291,8 @@ class Background {
     }
 
     if (msg.action === popupActions.STOP) {
-      browser.sendTabMessage({ action: popupActions.STOP })
+      // 将 STOP 广播到录制 tab 的所有帧（含 iframe）
+      browser.sendMessageToAllFrames(this._recordingTabId, { action: popupActions.STOP })
       this.stop()
     }
 
@@ -282,25 +305,31 @@ class Background {
 
     if (msg.action === popupActions.PAUSE) {
       if (!msg.stop) {
-        browser.sendTabMessage({ action: popupActions.PAUSE })
+        browser.sendMessageToAllFrames(this._recordingTabId, { action: popupActions.PAUSE })
       }
       this.pause()
     }
 
     if (msg.action === popupActions.UN_PAUSE) {
       if (!msg.stop) {
-        browser.sendTabMessage({ action: popupActions.UN_PAUSE })
+        browser.sendMessageToAllFrames(this._recordingTabId, { action: popupActions.UN_PAUSE })
       }
       this.unPause()
     }
   }
 
-  async handleNavigation({ frameId, url }) {
-    await browser.injectContentScript()
-    this.toggleOverlay({ open: true, pause: this._isPaused })
+  async handleNavigation({ frameId, url, tabId }) {
+    // 过滤非录制 tab 的导航事件，避免影响其他标签页的帧
+    if (this._recordingTabId && tabId !== this._recordingTabId) return
 
     if (frameId === 0) {
+      // 主帧导航：全量注入（覆盖页面上已有的所有 iframe）并更新悬浮层
+      await browser.injectContentScript()
+      this.toggleOverlay({ open: true, pause: this._isPaused })
       this.recordNavigation(url)
+    } else {
+      // iframe 导航：使用事件自带的 tabId 注入到该具体帧，避免 getActiveTab() 因切换标签蝟而注入错误 tab
+      await browser.injectContentScriptIntoFrame(frameId, tabId)
     }
   }
 

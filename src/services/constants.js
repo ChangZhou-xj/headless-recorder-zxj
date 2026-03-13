@@ -3,6 +3,8 @@ export const recordingControls = {
   GET_VIEWPORT_SIZE: 'GET_VIEWPORT_SIZE',
   GET_CURRENT_URL: 'GET_CURRENT_URL',
   GET_SCREENSHOT: 'GET_SCREENSHOT',
+  // 顶层 content script 检测到新 iframe 时发送给后台，请求重新注入所有帧
+  INJECT_ALL_FRAMES: 'INJECT_ALL_FRAMES',
 }
 
 export const popupActions = {

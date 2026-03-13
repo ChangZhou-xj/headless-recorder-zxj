@@ -2,7 +2,11 @@
   <div class="bg-gray-lightest dark:bg-black flex flex-col overflow-hidden">
     <Header @options="openOptions" @help="goHelp" @dark="toggleDarkMode" />
 
-    <Home v-if="!showResultsTab && !isRecording" @start="toggleRecord" />
+    <Home
+      v-if="!showResultsTab && !isRecording"
+      :initial-func-desc="funcDesc"
+      @start="onStart"
+    />
 
     <Recording
       @stop="toggleRecord"
@@ -101,6 +105,9 @@ export default {
 
       testCases: [],
       options: createDefaultOptions(),
+
+      // 录制前手动填写的功能基础描述，生成用例时作为「功能」列前缀
+      funcDesc: '',
     }
   },
 
@@ -119,6 +126,12 @@ export default {
   },
 
   methods: {
+    // Home 组件 start 事件携带用户输入的功能描述
+    onStart(desc) {
+      this.funcDesc = desc || ''
+      this.toggleRecord()
+    },
+
     toggleRecord(close = true) {
       if (this.isRecording) {
         this.stop()
@@ -165,9 +178,18 @@ export default {
     },
 
     async generateTestCases() {
-      const { recording = [], options = {} } = await storage.get(['recording', 'options'])
+      const { recording = [], options = {}, funcDesc = '' } = await storage.get([
+        'recording',
+        'options',
+        'funcDesc',
+      ])
       const mergedOptions = merge(createDefaultOptions(), options)
-      const generator = new TestCaseGenerator(mergedOptions.testCase)
+      // 优先使用当前内存中的 funcDesc（刚录完），其次读取 storage（重启恢复场景）
+      const resolvedFuncDesc = this.funcDesc || funcDesc || ''
+      const generator = new TestCaseGenerator({
+        ...mergedOptions.testCase,
+        funcDesc: resolvedFuncDesc,
+      })
       const testCases = generator.generate(recording)
 
       this.recording = recording
@@ -188,6 +210,7 @@ export default {
         options,
         recording,
         testCases = [],
+        funcDesc = '',
         clear,
         pause,
         restart,
@@ -196,6 +219,7 @@ export default {
         'options',
         'recording',
         'testCases',
+        'funcDesc',
         'clear',
         'pause',
         'restart',
@@ -204,6 +228,7 @@ export default {
       this.isRecording = controls.isRecording
       this.isPaused = controls.isPaused
       this.options = merge(createDefaultOptions(), options || {})
+      this.funcDesc = funcDesc || ''
 
       if (this.isRecording) {
         this.liveEvents = recording
@@ -238,6 +263,7 @@ export default {
         codeForPlaywright: '',
         testCases: this.testCases,
         controls: { isRecording: this.isRecording, isPaused: this.isPaused },
+        funcDesc: this.funcDesc,
       })
     },
 

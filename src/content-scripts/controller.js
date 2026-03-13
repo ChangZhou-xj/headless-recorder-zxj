@@ -14,6 +14,15 @@ export default class HeadlessController {
     this.shooter = null
     this.overlay = overlay
     this.recorder = recorder
+
+    // 当前执行上下文是否为顶层 frame（非 iframe 嵌入）。
+    // 使用 window.self === window.top 而非比较 location 对象，
+    // 避免跨域 iframe 访问 window.parent.location 时抛出 SecurityError。
+    try {
+      this._isTopFrame = window.self === window.top
+    } catch (e) {
+      this._isTopFrame = false
+    }
   }
 
   async init() {
@@ -39,22 +48,33 @@ export default class HeadlessController {
     }
 
     switch (msg.action) {
+      // ── 以下操作仅在顶层 frame 执行，避免 iframe 也挂载抉浮层或触发截图
       case overlayActions.TOGGLE_SCREENSHOT_MODE:
-        this.handleScreenshot(false)
+        if (this._isTopFrame) this.handleScreenshot(false)
         break
 
       case overlayActions.TOGGLE_SCREENSHOT_CLIPPED_MODE:
-        this.handleScreenshot(true)
+        if (this._isTopFrame) this.handleScreenshot(true)
         break
 
       case overlayActions.CLOSE_SCREENSHOT_MODE:
-        this.cancelScreenshot()
+        if (this._isTopFrame) this.cancelScreenshot()
         break
 
       case overlayActions.TOGGLE_OVERLAY:
-        msg?.value?.open ? this.overlay.mount(msg.value) : this.overlay.unmount()
+        if (this._isTopFrame) {
+          msg?.value?.open ? this.overlay.mount(msg.value) : this.overlay.unmount()
+        }
         break
 
+      case 'CODE':
+        if (this._isTopFrame) {
+          await browser.copyToClipboard(msg.value)
+          this.store.commit('showCopy')
+        }
+        break
+
+      // ── 以下操作需要所有 frame（包括 iframe）同步状态
       case popupActions.STOP:
         this.store.commit('close')
         break
@@ -65,11 +85,6 @@ export default class HeadlessController {
 
       case popupActions.UN_PAUSE:
         this.store.commit('unpause')
-        break
-
-      case 'CODE':
-        await browser.copyToClipboard(msg.value)
-        this.store.commit('showCopy')
         break
     }
   }

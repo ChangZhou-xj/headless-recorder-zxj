@@ -967,7 +967,14 @@ function getRemark(recording = [], caseType = DEFAULT_CASE_TYPE, pageIndex = 1, 
 export function buildTestCase(recording = [], index = 1, meta = {}) {
   const pageFeature = meta.pageFeature || getPageFeature(recording)
   const caseType = meta.caseType || getCaseType(recording)
-  const feature = meta.feature || getScenarioName(recording, pageFeature)
+  const rawFeature = meta.feature || getScenarioName(recording, pageFeature)
+  // 若调用方传入了功能基础描述，则拼接为「基础描述-场景名」；纯冒烟/仅打开页面时直接用基础描述
+  const funcDesc = (meta.funcDesc || '').trim()
+  const feature = funcDesc
+    ? rawFeature && rawFeature !== pageFeature
+      ? `${funcDesc}-${rawFeature}`
+      : funcDesc
+    : rawFeature
 
   // 用例标题：对齐示例「登录-边界值测试-密码为6位数字」风格（改进方向第 6/7 条）
   const keyword = inferActionKeyword(
@@ -1011,6 +1018,12 @@ export function buildTestCase(recording = [], index = 1, meta = {}) {
 }
 
 export default class TestCaseGenerator {
+  constructor(options = {}) {
+    // funcDesc：录制前用户手动填写的功能基础描述
+    // 非空时，每条用例的「功能」列格式变为「基础描述-场景名」
+    this._funcDesc = (options.funcDesc || '').trim()
+  }
+
   generate(recording = []) {
     if (!Array.isArray(recording) || recording.length === 0) {
       return []
@@ -1035,6 +1048,7 @@ export default class TestCaseGenerator {
             caseType: scenario.type || getCaseType(scenario.events),
             pageIndex: pageIndex + 1,
             scenarioIndex: scenarioIndex + 1,
+            funcDesc: this._funcDesc,
           })
         )
         index += 1

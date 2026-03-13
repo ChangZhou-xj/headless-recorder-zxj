@@ -9,7 +9,13 @@ export default class Recorder {
     this._eventLog = []
     this._previousEvent = null
 
-    this._isTopFrame = window.location === window.parent.location
+    // 使用 window.self === window.top 判断是否为顶层帧，避免跨域 iframe 中
+    // 访问 window.parent.location 引发 SecurityError
+    try {
+      this._isTopFrame = window.self === window.top
+    } catch (e) {
+      this._isTopFrame = false
+    }
     this._isRecordingClicks = true
 
     this.store = store
@@ -43,6 +49,8 @@ export default class Recorder {
     // 监听 SPA 客户端路由变化，采集 pushState / hash 跳转的真实 URL
     if (this._isTopFrame) {
       this._observeRouteChanges()
+      // 监听页面中动态新增的 iframe，发送注入请求到后台
+      this._observeNewIframes()
     }
   }
 
@@ -320,8 +328,60 @@ export default class Recorder {
    *   该事件只在「完整页面加载」时触发，SPA 的客户端路由切换
    *   不产生网络请求，因此不会触发，导致 NAVIGATION 事件无 href。
    */
-  _observeRouteChanges() {
-    // 防止多次注入重复监听
+  /**
+   * 在顶层帧中监听 DOM 中新增的 <iframe> 元素。
+   *
+   * 场景覆盖：
+   *   — SPA 动态渲染的 iframe（如 el-dialog 内嵌入第三方页面）
+   *   — 指向 about:blank / srcdoc 的 iframe（不会触发 webNavigation.onCompleted）
+   *   — 对已有 iframe src 属性被动态修改的场景
+   *
+   * 当内容脚本检测到新增的 iframe 时，向后台发送 INJECT_ALL_FRAMES 控制消息，
+   * 后台将所有帧重新注入 content script，确保新 iframe 也能录制操作。
+   */
+  _observeNewIframes() {
+    if (!window.MutationObserver) return
+    // 防止重复注册
+    if (window.pptRecorderIframeObserverAdded) return
+    window.pptRecorderIframeObserverAdded = true
+
+    // 节流：同一轮事件循环内的多次触发合并为一次注入请求
+    let pendingInject = false
+    const requestInject = () => {
+      if (pendingInject) return
+      pendingInject = true
+      setTimeout(() => {
+        this._sendMessage({ control: recordingControls.INJECT_ALL_FRAMES })
+        pendingInject = false
+      }, 200)
+    }
+
+    const checkNode = node => {
+      if (node.nodeType !== Node.ELEMENT_NODE) return
+      const tag = (node.tagName || '').toLowerCase()
+      if (tag === 'iframe') {
+        requestInject()
+        return
+      }
+      // 检查子树中是否包含 iframe
+      if (node.querySelector && node.querySelector('iframe')) {
+        requestInject()
+      }
+    }
+
+    const observer = new MutationObserver(mutations => {
+      mutations.forEach(mutation => {
+        mutation.addedNodes.forEach(checkNode)
+      })
+    })
+
+    const root = window.document.documentElement || window.document.body
+    if (root) {
+      observer.observe(root, { childList: true, subtree: true })
+    }
+  }
+
+  _observeRouteChanges() {    // 防止多次注入重复监听
     if (window.pptRecorderAddedRouteListeners) return
     window.pptRecorderAddedRouteListeners = true
 
