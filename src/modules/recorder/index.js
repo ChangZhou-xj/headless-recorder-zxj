@@ -46,12 +46,14 @@ export default class Recorder {
     // 监听 Element UI / 通用 Toast 通知组件，采集系统对用户操作的反馈消息
     this._observeNotices()
 
-    // 监听 SPA 客户端路由变化，采集 pushState / hash 跳转的真实 URL
+    // 监听 SPA 客户端路由变化，采集 pushState / hash 跳转的真实 URL（仅顶层帧）
     if (this._isTopFrame) {
       this._observeRouteChanges()
-      // 监听页面中动态新增的 iframe，发送注入请求到后台
-      this._observeNewIframes()
     }
+
+    // 所有帧（包括 iframe 内部）都需要监听动态新增的 iframe，
+    // 确保多层嵌套 iframe 场景下子帧也能检测并通知后台补注入 content script。
+    this._observeNewIframes()
   }
 
   _addAllListeners(events) {

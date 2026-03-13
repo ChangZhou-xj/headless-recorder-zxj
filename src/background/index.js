@@ -323,8 +323,9 @@ class Background {
     if (this._recordingTabId && tabId !== this._recordingTabId) return
 
     if (frameId === 0) {
-      // 主帧导航：全量注入（覆盖页面上已有的所有 iframe）并更新悬浮层
-      await browser.injectContentScript()
+      // 主帧导航：使用事件自带的 tabId 注入（覆盖页面上已有的所有 iframe），
+      // 避免 injectContentScript() 内部调用 getActiveTab() 因用户切换标签页而注入到错误 tab。
+      await browser.injectContentScriptIntoTab(tabId)
       this.toggleOverlay({ open: true, pause: this._isPaused })
       this.recordNavigation(url)
     } else {
