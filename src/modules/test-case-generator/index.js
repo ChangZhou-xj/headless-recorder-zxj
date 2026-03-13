@@ -118,7 +118,7 @@ function translateSelector(selector = '') {
   if (/amount|price|money|fee/.test(s)) return '金额输入框'
   if (/start.?date|begin.?date/.test(s)) return '开始日期'
   if (/end.?date|expir/.test(s)) return '结束日期'
-  if (/date|time/.test(s)) return '日期/时间选择'
+  if (/date|time/.test(s)) return '日期时间选择'
   if (/el-upload|upload.?input/.test(s)) return '文件上传控件'
 
   // ── 具体按钮（优先于通用按钮）
@@ -251,6 +251,7 @@ const GENERIC_FORM_CLICK_LABELS = new Set([
   '下拉选择框',
   '级联选择框',
   '日期/时间选择',
+  '日期时间选择',
   '日期选择',
   '日期时间选择',
   '日期时间选择（带时分秒）',
@@ -389,6 +390,7 @@ const ACTION_BUTTON_LABELS = new Set([
   'confirm',
 ])
 
+// Unicode Private Use Area（PUA）字符，常被 iconfont 用来显示无语义图标，如「」。
 const PRIVATE_USE_ICON_LABEL = /^[\uE000-\uF8FF]+$/
 
 function normalizeTextLabel(text = '') {
@@ -474,7 +476,7 @@ function inferGenericFieldLabel(selector = '', action = '', formType = '') {
   if (/uni[-\s_]*textarea|\btextarea\b/.test(s)) return '文本域'
   if (/uni[-\s_]*body|\bbody\b/.test(s))
     return ['keydown', 'change'].includes(action) ? '编辑区域' : ''
-  if (/date|time|picker|calendar/.test(s)) return '日期/时间选择'
+  if (/date|time|picker|calendar/.test(s)) return '日期时间选择'
   if (/select|dropdown|cascader/.test(s)) return '下拉选择框'
   if (/uni[-\s_]*input|\binput\b/.test(s)) return '输入框'
 
@@ -1118,12 +1120,34 @@ function getTestData(recording = []) {
       rows.set(key, `${fieldName}：${event.value}`)
     }
 
-    if (event.action === 'change' && event.selector && event.value) {
+    if (event.action === 'change' && event.selector) {
+      const fieldName = getInputLikeLabel(event)
+      const changeVerb = getFormVerb(event.formType)
+      const hasValue =
+        (event.value !== undefined && event.value !== null && event.value !== '') ||
+        event.checked !== undefined
+
+      if (!hasValue) return
+      if (event.formType === 'switch' && event.checked !== undefined) {
+        const key = `switch:${event.selector || fieldName}`
+        rows.delete(key)
+        rows.set(key, `${fieldName}：${event.checked ? '开启' : '关闭'}`)
+        return
+      }
+
       // checkbox / radio 的 change 没有有意义的"测试数据"（checked 状态不是数据）
       if (event.checked !== undefined) return
-      const fieldName = getInputLikeLabel(event)
+
       const key = `change:${event.selector || fieldName}`
       rows.delete(key)
+      if (event.formType === 'file') {
+        rows.set(key, `${fieldName}（上传）：${event.value}`)
+        return
+      }
+      if (changeVerb === 'input') {
+        rows.set(key, `${fieldName}：${event.value}`)
+        return
+      }
       rows.set(key, `${fieldName}（选择）：${event.value}`)
     }
 
@@ -1200,6 +1224,37 @@ function isHumanStep(event, index, arr) {
 function isExpectationRelevant(event, index, arr) {
   if (event.action === headlessActions.VIEWPORT) return false
   if (event.action === headlessActions.NAVIGATION) return false
+  if (event.action === 'click') {
+    const next = arr[index + 1]
+    if (
+      next &&
+      ['keydown', 'change'].includes(next.action) &&
+      event.selector &&
+      next.selector &&
+      event.selector === next.selector
+    ) {
+      return false
+    }
+    if (next && isInteractiveAction(next.action)) {
+      const clickLabel = normalizeTextLabel(resolveLabel(event))
+      if (GENERIC_FORM_CLICK_LABELS.has(clickLabel)) return false
+      if (
+        [...GENERIC_FORM_CLICK_LABELS].some(
+          suffix => clickLabel.endsWith(suffix) && clickLabel !== suffix
+        )
+      ) {
+        return false
+      }
+    }
+    if (
+      event.formType &&
+      (SELECT_FORM_TYPES.has(event.formType) || DATE_FORM_TYPES.has(event.formType)) &&
+      next &&
+      next.action === 'change'
+    ) {
+      return false
+    }
+  }
   if (event.action === headlessActions.GOTO) {
     return arr.findIndex(e => e.action === headlessActions.GOTO) === index
   }

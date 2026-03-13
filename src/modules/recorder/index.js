@@ -118,6 +118,7 @@ export default class Recorder {
         selector,
         value: recordValue,
         tagName: e.target.tagName,
+        formType: Recorder._getFormType(e.target),
         action: e.type,
         keyCode: e.keyCode ? e.keyCode : null,
         href: e.target.href ? e.target.href : null,
@@ -156,6 +157,97 @@ export default class Recorder {
     }
 
     return eventsWithCoordinates[evt.type] ? { x: evt.clientX, y: evt.clientY } : null
+  }
+
+  static _getFormType(el) {
+    if (!el || !el.getAttribute) return ''
+
+    const isAmountField = hints => /金额|price|money|amount|fee/i.test(hints)
+
+    const readDeclaredFormType = node => {
+      if (!node || !node.getAttribute) return ''
+      return (
+        node.getAttribute('data-form-type') ||
+        node.getAttribute('form-type') ||
+        node.dataset?.formType ||
+        ''
+      )
+        .trim()
+    }
+
+    const getTextHints = node => {
+      const hints = [
+        node.getAttribute?.('placeholder'),
+        node.getAttribute?.('aria-label'),
+        node.getAttribute?.('title'),
+        node.getAttribute?.('name'),
+      ]
+      return hints
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+    }
+
+    let current = el
+    for (let hop = 0; hop < 4 && current; hop++) {
+      const declared = readDeclaredFormType(current)
+      if (declared) return declared
+      current = current.parentElement
+    }
+
+    const tag = (el.tagName || '').toLowerCase()
+    const type = (el.getAttribute('type') || '').toLowerCase()
+    const className = (el.getAttribute('class') || '').toLowerCase()
+    const hints = getTextHints(el)
+
+    if (tag === 'textarea') return 'textarea'
+    if (tag === 'select') return 'select'
+
+    if (tag === 'input') {
+      if (type === 'checkbox') return 'checkbox'
+      if (type === 'radio') return 'radio'
+      if (type === 'file') return 'file'
+      if (type === 'date') return 'date'
+      if (type === 'datetime-local') return 'dateTime'
+      if (type === 'month') return 'month'
+      if (type === 'time') return 'time'
+      if (type === 'number') return isAmountField(hints) ? 'formatInput' : 'input'
+      return 'input'
+    }
+
+    if (el.closest?.('[role="switch"], .el-switch, .uni-switch, switch')) return 'switch'
+    if (el.closest?.('.el-upload, .uni-file-picker, input[type="file"]')) return 'file'
+    if (el.closest?.('.el-tree, .tree-select, .uni-tree')) return 'tree'
+    if (el.closest?.('.el-cascader, .area-select')) return 'areaSelect'
+    if (el.closest?.('.bank-input, .bank-selector')) return 'bankInput'
+    if (el.closest?.('.select-follower, .traveller-selector')) return 'selectFollower'
+    if (el.closest?.('.el-select, .el-dropdown-menu, .uni-data-select')) return 'select'
+    if (el.closest?.('.el-textarea, .uni-textarea')) return 'textarea'
+    if (el.closest?.('.el-input, .uni-easyinput, .uni-input-wrapper')) {
+      return isAmountField(hints) ? 'formatInput' : 'input'
+    }
+
+    if (
+      /date|time|calendar|datetime|month/.test(className) ||
+      /日期|时间|月份/.test(hints) ||
+      el.closest?.('.el-date-editor, .el-date-picker, .el-time-panel, .uni-datetime-picker, .uni-date')
+    ) {
+      if (/datetime|日期时间/.test(className + hints)) return 'dateTime'
+      if (/month|月份/.test(className + hints)) return 'month'
+      if (/time|时间/.test(className + hints) && !/date|日期/.test(className + hints)) return 'time'
+      return 'date'
+    }
+
+    if (
+      /select|picker|dropdown|cascader/.test(className) ||
+      el.closest?.('.uni-picker, .uni-select, .select-wrapper')
+    ) {
+      return /date|time|日期|时间|month|月份/.test(className + hints) ? 'date' : 'select'
+    }
+
+    if (/textarea/.test(className)) return 'textarea'
+
+    return ''
   }
 
   /**

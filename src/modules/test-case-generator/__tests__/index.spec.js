@@ -315,4 +315,99 @@ describe('TestCaseGenerator', () => {
     expect(testCase['操作步骤']).not.toContain('uni textarea textarea')
     expect(testCase['操作步骤']).not.toContain('""body""')
   })
+
+  test('formType 会驱动输入类 change 使用“输入”动词并带上控件后缀', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/expense' },
+      {
+        action: 'change',
+        selector: '.amount-input',
+        formType: 'formatInput',
+        value: '200',
+        label: '请输入报销金额',
+      },
+    ])
+
+    expect(testCase['测试数据']).toContain('报销金额输入框：200')
+    expect(testCase['操作步骤']).toContain('在"报销金额输入框"中输入"200"')
+    expect(testCase['操作步骤']).not.toContain('在"报销金额输入框"中选择"200"')
+    expect(testCase['预期结果']).toContain('"报销金额输入框"成功录入"200"')
+  })
+
+  test('formType 会驱动日期、开关与文件上传的步骤和预期结果文案', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/apply' },
+      {
+        action: 'change',
+        selector: '.travel-date',
+        formType: 'dateTime',
+        value: '2026-03-13 10:00',
+        label: '请选择出发时间',
+      },
+      {
+        action: 'change',
+        selector: '.need-invoice',
+        formType: 'switch',
+        checked: true,
+        label: '是否开票',
+      },
+      {
+        action: 'change',
+        selector: '.upload-proof',
+        formType: 'file',
+        value: 'invoice.png',
+        label: '上传凭证',
+      },
+    ])
+
+    expect(testCase['测试数据']).toContain('出发时间日期时间选择（选择）：2026-03-13 10:00')
+    expect(testCase['测试数据']).toContain('是否开票开关：开启')
+    expect(testCase['测试数据']).toContain('上传凭证文件上传框（上传）：invoice.png')
+    expect(testCase['操作步骤']).toContain('在"出发时间日期时间选择"中选择"2026-03-13 10:00"')
+    expect(testCase['操作步骤']).toContain('开启"是否开票开关"')
+    expect(testCase['操作步骤']).toContain('上传文件至"上传凭证文件上传框"：「invoice.png」')
+    expect(testCase['预期结果']).toContain('"出发时间日期时间选择"已选中日期"2026-03-13 10:00"')
+    expect(testCase['预期结果']).toContain('"是否开票开关"已开启')
+    expect(testCase['预期结果']).toContain('文件已选择并成功上传至"上传凭证文件上传框"')
+    expect(testCase['预期结果']).not.toContain('点击"请选择出发时间"后页面正常响应')
+  })
+
+  test('选择/日期类字段的打开面板 click 步骤会在紧随 change 时被省略', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/booking' },
+      {
+        action: 'click',
+        selector: '.date-trigger',
+        formType: 'dateTime',
+        label: '请选择出发时间',
+      },
+      {
+        action: 'change',
+        selector: '.date-panel input',
+        formType: 'dateTime',
+        value: '2026-03-13 10:00',
+        label: '请选择出发时间',
+      },
+      {
+        action: 'click',
+        selector: '.type-trigger',
+        formType: 'select',
+        label: '请选择报销类型',
+      },
+      {
+        action: 'change',
+        selector: '.type-panel',
+        formType: 'select',
+        value: '日常报销',
+        label: '请选择报销类型',
+      },
+    ])
+
+    expect(testCase['操作步骤']).toContain('在"出发时间日期时间选择"中选择"2026-03-13 10:00"')
+    expect(testCase['操作步骤']).toContain('在"报销类型下拉选择框"中选择"日常报销"')
+    expect(testCase['操作步骤']).not.toContain('点击"请选择出发时间"（打开日期选择）')
+    expect(testCase['操作步骤']).not.toContain('点击"请选择报销类型"（展开选择）')
+    expect(testCase['预期结果']).not.toContain('点击"请选择出发时间"后页面正常响应')
+    expect(testCase['预期结果']).not.toContain('点击"请选择报销类型"后页面正常响应')
+  })
 })
