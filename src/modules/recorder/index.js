@@ -1,7 +1,7 @@
 import getSelector from '@/services/selector'
 import { recordingControls } from '@/services/constants'
 import { overlaySelectors } from '@/modules/overlay/constants'
-import { eventsToRecord } from '@/modules/code-generator/constants'
+import { eventsToRecord, headlessActions } from '@/modules/code-generator/constants'
 
 export default class Recorder {
   constructor({ store }) {
@@ -39,6 +39,11 @@ export default class Recorder {
 
     // 监听 Element UI / 通用 Toast 通知组件，采集系统对用户操作的反馈消息
     this._observeNotices()
+
+    // 监听 SPA 客户端路由变化，采集 pushState / hash 跳转的真实 URL
+    if (this._isTopFrame) {
+      this._observeRouteChanges()
+    }
   }
 
   _addAllListeners(events) {
@@ -78,9 +83,30 @@ export default class Recorder {
 
       this.store.commit('showRecorded')
 
+      // ── 补充 change 事件的语义值 ──────────────────────────────────────────
+      // 1. 原生 <select>：e.target.value = option 的 value 属性（通常是数字 ID），
+      //    记录人类可读的展示文字更有意义。
+      // 2. checkbox / radio：e.target.value 是 "on" 或自定义属性，没有语义；
+      //    真正有意义的是 checked 布尔值。
+      let recordValue = e.target.value
+      let checkedPayload = {}
+
+      if (e.type === 'change') {
+        if (e.target.tagName === 'SELECT') {
+          const idx = e.target.selectedIndex
+          if (idx >= 0) {
+            const optText = (e.target.options[idx].text || '').trim()
+            if (optText) recordValue = optText
+          }
+        } else if (e.target.type === 'checkbox' || e.target.type === 'radio') {
+          checkedPayload = { checked: e.target.checked }
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
       this._sendMessage({
         selector,
-        value: e.target.value,
+        value: recordValue,
         tagName: e.target.tagName,
         action: e.type,
         keyCode: e.keyCode ? e.keyCode : null,
@@ -88,6 +114,7 @@ export default class Recorder {
         coordinates: Recorder._getCoordinates(e),
         // 采集元素的业务语义标签，供测试用例生成器直接使用
         label: Recorder._getElementLabel(e.target),
+        ...checkedPayload,
       })
     } catch (err) {
       console.error(err)
@@ -171,6 +198,34 @@ export default class Recorder {
       return Recorder._getLabelFromAncestor(el)
     }
 
+    // 0-b. el-checkbox / el-radio：真实目标是隐藏的 <input type="checkbox/radio">，
+    //      业务语义在旁边的 .el-checkbox__label / .el-radio__label span 里。
+    //      优先取该 span 文字；找不到则取 closest label 的文字；
+    //      最终实在找不到就回退为 "复选框" / "单选框"。
+    if (tag === 'input') {
+      const inputType = (el.getAttribute('type') || '').toLowerCase()
+      if (inputType === 'checkbox') {
+        const wrapper = el.closest && el.closest('.el-checkbox, .el-checkbox-button')
+        if (wrapper) {
+          const labelSpan =
+            wrapper.querySelector('.el-checkbox__label') ||
+            wrapper.querySelector('.el-checkbox-button__inner')
+          const text = (labelSpan?.textContent || '').trim()
+          if (text) return text
+        }
+      }
+      if (inputType === 'radio') {
+        const wrapper = el.closest && el.closest('.el-radio, .el-radio-button')
+        if (wrapper) {
+          const labelSpan =
+            wrapper.querySelector('.el-radio__label') ||
+            wrapper.querySelector('.el-radio-button__inner')
+          const text = (labelSpan?.textContent || '').trim()
+          if (text) return text
+        }
+      }
+    }
+
     // 1. aria-label（无障碍标签，通常等同于业务名）
     const ariaLabel = (el.getAttribute('aria-label') || '').trim()
     if (ariaLabel) return ariaLabel
@@ -252,6 +307,56 @@ export default class Recorder {
    * 采集到通知后发送 { action: 'NOTICE', noticeType, value } 事件，
    * 供测试用例生成器填写"预期结果"字段，不对用户操作步骤造成影响。
    */
+  /**
+   * 监听 SPA 客户端路由变化，在路由切换时主动发送带有新 URL 的 NAVIGATION 事件。
+   *
+   * 覆盖以下四种 SPA 跳转方式：
+   *   1. hash 模式路由（Vue Router hash mode）    → hashchange
+   *   2. history 模式浏览器前进/后退               → popstate
+   *   3. history.pushState（Vue Router history mode 正向跳转）→ monkey-patch
+   *   4. history.replaceState（重定向/登录后替换当前记录） → monkey-patch
+   *
+   * 为什么不依赖 chrome.webNavigation.onCompleted：
+   *   该事件只在「完整页面加载」时触发，SPA 的客户端路由切换
+   *   不产生网络请求，因此不会触发，导致 NAVIGATION 事件无 href。
+   */
+  _observeRouteChanges() {
+    // 防止多次注入重复监听
+    if (window.pptRecorderAddedRouteListeners) return
+    window.pptRecorderAddedRouteListeners = true
+
+    const sendNav = href => {
+      this._sendMessage({
+        action: headlessActions.NAVIGATION,
+        href,
+      })
+    }
+
+    // ── 1. Hash 路由（Vue Router hash 模式）
+    window.addEventListener('hashchange', () => {
+      sendNav(window.location.href)
+    })
+
+    // ── 2. 浏览器前进 / 后退触发的 popstate
+    window.addEventListener('popstate', () => {
+      sendNav(window.location.href)
+    })
+
+    // ── 3 & 4. Vue Router history 模式（pushState / replaceState）
+    //    调用后 URL 立即更新，window.location.href 即为新地址
+    const origPush = history.pushState.bind(history)
+    history.pushState = (state, title, url) => {
+      origPush(state, title, url)
+      sendNav(window.location.href)
+    }
+
+    const origReplace = history.replaceState.bind(history)
+    history.replaceState = (state, title, url) => {
+      origReplace(state, title, url)
+      sendNav(window.location.href)
+    }
+  }
+
   _observeNotices() {
     if (!window.MutationObserver || !window.document.body) return
 

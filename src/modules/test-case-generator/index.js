@@ -232,13 +232,77 @@ function isMeaningfulEvent(event) {
   // 这类标签仅由 CSS class 片段拼凑，不具备业务语义，统一过滤
   if (/^"[a-z][\w\s-]{2,}"$/.test(label)) return false
 
+  // 加载状态类标签（"加载中"、"Loading..."等）：系统状态，不是用户操作
+  if (/^(加载中|加载\.+|loading\.+|请稍候|请稍等|处理中)$/i.test(label)) return false
+
   return true
 }
 
 /**
+ * 操作型按钮标签集合——这些标签代表独立业务动作，绝不应被合并进菜单导航路径。
+ * 若 collapseMenuPath 检测到序列中包含这些标签，则放弃合并，改为逐条输出步骤。
+ */
+const ACTION_BUTTON_LABELS = new Set([
+  '保存',
+  '提交',
+  '确认',
+  '确定',
+  '发布',
+  '审核',
+  '新增',
+  '创建',
+  '添加',
+  '删除',
+  '编辑',
+  '修改',
+  '取消',
+  '关闭',
+  '返回',
+  '退出',
+  '重置',
+  '清空',
+  '搜索',
+  '查询',
+  '导出',
+  '导入',
+  '上传',
+  '下载',
+  '刷新',
+  '复制',
+  '粘贴',
+  '登录',
+  '注销',
+  '退出登录',
+  '完成',
+  '提交审核',
+  // 常见英文对话框/操作按钮（防止英文 UI 被误判为导航路径节点）
+  'Close',
+  'close',
+  'OK',
+  'ok',
+  'Cancel',
+  'cancel',
+  'Submit',
+  'submit',
+  'Save',
+  'save',
+  'Delete',
+  'delete',
+  'Edit',
+  'edit',
+  'Reset',
+  'reset',
+  'Confirm',
+  'confirm',
+])
+
+/**
  * 检测连续 click 事件是否构成菜单导航路径。
- * 菜单路径特征：每个 label 都是 ≤12 字的纯中文短语，且数量 ≥ 2。
- * 满足条件时合并为单一的 { _menuPath: string[] } 描述事件。
+ * 菜单路径特征：
+ *   1. 每个 label 都是 ≤12 字的纯中文短语
+ *   2. 数量 ≥ 2
+ *   3. 序列中没有操作型按钮标签（保存/取消/确认等），避免把按钮连击误判为导航
+ * 满足以上条件时合并为单一的 { _menuPath: string[] } 描述事件。
  */
 function collapseMenuPath(events = []) {
   const result = []
@@ -258,10 +322,29 @@ function collapseMenuPath(events = []) {
 
       if (run.length >= 2) {
         const labels = run.map(e => resolveLabel(e))
-        // 判断是否为菜单导航路径：每段都是 ≤12 字的中文短语
-        const isMenuNav = labels.every(
+        // 判断是否为菜单导航路径，必须同时满足：
+        //   1. 每段都是 ≤12 字的中文短语（\w 匹配 ASCII，额外排除纯英文）
+        //   2. 没有操作型按钮标签（保存/取消/Close 等）
+        //   3. 没有纯英文标签（"Close"、"OK" 等对话框按钮）
+        //   4. 没有表单 placeholder 类标签（以"输入"开头，如"输入名称"）
+        //   5. 没有纯编码/数字类标签（如"1101-001"，这是数据而非菜单项）
+        const allShortChinese = labels.every(
           l => l && /^[\u4e00-\u9fa5\w·（）()]{1,12}$/.test(l.replace(/^"|"$/g, ''))
         )
+        const noActionButtons = labels.every(l => !ACTION_BUTTON_LABELS.has(l))
+        // 纯英文 / 含英文大写字母的标签：视为对话框/组件按钮，不是导航菜单项
+        const noEnglishLabels = labels.every(l => !/^[A-Za-z]/.test(l))
+        // 以"输入"开头：placeholder 文字（"输入名称"、"输入关键字"），不是菜单项
+        const noPlaceholderLabels = labels.every(l => !/^输入/.test(l))
+        // 主要是数字/字母编码（如"1101-001"），不是菜单项
+        const noCodeLabels = labels.every(l => !/^\d{2,}[-./]\d/.test(l))
+
+        const isMenuNav =
+          allShortChinese &&
+          noActionButtons &&
+          noEnglishLabels &&
+          noPlaceholderLabels &&
+          noCodeLabels
 
         if (isMenuNav) {
           // 合并为单条菜单导航事件
@@ -623,8 +706,9 @@ function getEventActionText(event = {}) {
   const { action, value, href } = event
 
   // 菜单导航路径（由 collapseMenuPath 合并而来）
+  // 格式：点击导航菜单：绩效配置 → 绩效管理 → 绩效自评
   if (event._menuPath) {
-    return `点击菜单导航：${event._menuPath.join(' > ')}`
+    return `点击导航菜单：${event._menuPath.join(' → ')}`
   }
 
   // resolveLabel 优先用录制时采集的真实标签，降级才用选择器翻译
@@ -639,13 +723,16 @@ function getEventActionText(event = {}) {
     case 'click':
       return `点击${labelStr}`
     case 'keydown':
-      return `在${labelStr}中输入${value ? `：${value}` : ''}`
+      return value ? `在${labelStr}中输入"${value}"` : `在${labelStr}中进行输入操作`
     case 'change':
+      if (event.checked !== undefined) {
+        return event.checked ? `勾选${labelStr}` : `取消勾选${labelStr}`
+      }
       return `在${labelStr}中选择"${value}"`
     case headlessActions.NAVIGATION:
       return '等待页面加载完成'
     case headlessActions.SCREENSHOT:
-      return value ? `对"${value}"进行截图` : '进行整页截图'
+      return value ? `对"${value}"区域进行截图` : '进行整页截图'
     default:
       return ''
   }
@@ -704,11 +791,17 @@ function getEventExpectationText(event = {}, caseType = DEFAULT_CASE_TYPE) {
       if (/选项卡/.test(label)) return '切换至对应选项卡内容'
       if (/重置按钮/.test(label)) return '筛选条件清空，列表恢复默认展示'
       if (/查看详情/.test(label)) return '弹出详情对话框或跳转详情页'
-      return `点击${label}后页面正常响应`
+      return `点击"${label || '该元素'}"后页面正常响应`
     }
     case 'keydown':
-      return `"${label || '输入框'}"成功录入${value ? `：${value}` : '操作内容'}`
+      return `"${label || '输入框'}"成功录入"${value || '操作内容'}"`
     case 'change':
+      // checkbox / radio：使用勾选/取消语义
+      if (event.checked !== undefined) {
+        return event.checked
+          ? `"${label || '复选框'}"勾选成功`
+          : `"${label || '复选框'}"取消勾选成功`
+      }
       return `"${label || '下拉框'}"成功选中"${value}"`
     case headlessActions.NAVIGATION:
       return '页面跳转并加载成功'
@@ -751,6 +844,8 @@ function getTestData(recording = []) {
     }
 
     if (event.action === 'change' && event.selector && event.value) {
+      // checkbox / radio 的 change 没有有意义的"测试数据"（checked 状态不是数据）
+      if (event.checked !== undefined) return result
       const fieldName = extractFieldName(event)
       result.push(`${fieldName}（选择）：${event.value}`)
     }

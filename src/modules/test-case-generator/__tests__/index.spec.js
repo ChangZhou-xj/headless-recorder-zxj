@@ -73,8 +73,8 @@ describe('TestCaseGenerator', () => {
     ])
 
     // 操作步骤应使用真实标签，而非 CSS 选择器
-    expect(testCase['操作步骤']).toContain('在"用户名"中输入：admin')
-    expect(testCase['操作步骤']).toContain('在"密码"中输入：123456')
+    expect(testCase['操作步骤']).toContain('在"用户名"中输入"admin"')
+    expect(testCase['操作步骤']).toContain('在"密码"中输入"123456"')
     expect(testCase['操作步骤']).toContain('点击"登录"')
 
     // 测试数据应使用真实字段名
@@ -153,8 +153,8 @@ describe('TestCaseGenerator', () => {
     // el-icon-arrow-down 上溯成功后标签为"绩效配置"，应保留
     expect(steps).toContain('绩效配置')
 
-    // 连续菜单文字点击应折叠为路径
-    expect(steps).toContain('绩效管理 > 业务设置')
+    // 连续菜单文字点击应折叠为路径（无【】，用 → 分隔）
+    expect(steps).toContain('绩效管理 → 业务设置')
   })
 
   test('更多 Element UI 结构元素：折叠面板箭头、树节点展开图标、对话框关闭按钮均被过滤', () => {
@@ -176,5 +176,90 @@ describe('TestCaseGenerator', () => {
     expect(steps).not.toContain('树节点展开图标')
     expect(steps).not.toContain('对话框关闭按钮')
     expect(steps).toContain('新增')
+  })
+
+  test('路由 URL 变化（NAVIGATION.href）触发 SPA 跨页面用例拆分', () => {
+    // 模拟典型 SPA 登录后跳转场景：
+    //   1. 用户在 /login 页填写表单并提交
+    //   2. background.js 捕获 webNavigation 事件，NAVIGATION 携带新 href（/dashboard）
+    //   3. TestCaseGenerator 检测到 pathname 变化 → 拆为两条独立 TC
+    const generator = new TestCaseGenerator()
+    const rows = generator.generate([
+      // ── 登录页 ──────────────────────────────────────────────
+      { action: headlessActions.GOTO, href: 'https://example.com/login' },
+      {
+        action: 'keydown',
+        selector: '#username',
+        value: 'admin',
+        label: '用户名',
+      },
+      {
+        action: 'keydown',
+        selector: '#password',
+        value: '123456',
+        label: '密码',
+      },
+      {
+        action: 'click',
+        selector: '.login-btn',
+        label: '登录',
+      },
+      // NAVIGATION 携带跳转后的新 URL（pathname 由 /login → /dashboard）
+      // 这条事件由 background.js 的 handleNavigation 注入 href
+      {
+        action: headlessActions.NAVIGATION,
+        href: 'https://example.com/dashboard',
+      },
+      // ── 落地页（/dashboard）业务操作 ─────────────────────────
+      {
+        action: 'click',
+        selector: '.menu-item',
+        label: '绩效管理',
+      },
+      {
+        action: 'click',
+        selector: '.menu-sub-item',
+        label: '绩效配置',
+      },
+    ])
+
+    // ── 断言 1：必须拆分为两条以上 TC（/login 与 /dashboard 各自独立）
+    expect(rows.length).toBeGreaterThanOrEqual(2)
+
+    // ── 断言 2：存在归属 /login 路径且包含登录操作步骤的 TC
+    //    （/login 分组可能产生多行：smoke行仅含GOTO、功能行含交互步骤）
+    //    这里取包含登录交互步骤的行
+    const loginRow = rows.find(
+      r =>
+        r['功能'] &&
+        r['功能'].includes('login') &&
+        r['操作步骤'] &&
+        r['操作步骤'].includes('用户名')
+    )
+    expect(loginRow).toBeTruthy()
+    expect(loginRow['操作步骤']).toContain('在"用户名"中输入"admin"')
+    expect(loginRow['操作步骤']).toContain('点击"登录"')
+    expect(loginRow['测试数据']).toContain('用户名：admin')
+
+    // ── 断言 3：存在归属 /dashboard 路径且含业务操作的 TC
+    //    （/dashboard 分组也会产生 smoke 行，需过滤掉仅有 GOTO 的行）
+    const dashRow = rows.find(
+      r =>
+        r['功能'] &&
+        r['功能'].includes('dashboard') &&
+        r['操作步骤'] &&
+        r['操作步骤'].includes('绩效管理')
+    )
+    expect(dashRow).toBeTruthy()
+    expect(dashRow['操作步骤']).toContain('绩效管理')
+
+    // ── 断言 4：登录页 TC 的密码不应泄漏到 dashboard TC 的测试数据
+    if (dashRow) {
+      expect(dashRow['测试数据'] || '').not.toContain('密码：123456')
+    }
+
+    // ── 断言 5：两条 TC 的"功能"字段分别包含各自的路由路径（不能混淆）
+    expect(loginRow['功能']).not.toContain('dashboard')
+    expect(dashRow['功能']).not.toContain('login')
   })
 })
