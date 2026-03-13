@@ -32,6 +32,54 @@ const CASE_TYPES = {
 
 const INTERACTIVE_ACTIONS = ['click', 'dblclick', 'keydown', 'change', 'select', 'submit']
 
+/**
+ * 表单类型分组——与业务侧 FORM_TYPE 常量对齐。
+ * 用于在 getEventActionText / getEventExpectationText 中选择正确的动词。
+ */
+/** 文本输入类：用「输入」动词 */
+const INPUT_FORM_TYPES = new Set(['input', 'formatInput', 'textarea'])
+/** 日期/时间选择类：用「选择日期/时间」 */
+const DATE_FORM_TYPES = new Set([
+  'date',
+  'dateTime',
+  'dateTimeSeconds',
+  'month',
+  'dateRange',
+  'time',
+  'time_second',
+  'date_time_minute',
+])
+/** 下拉/枚举选择类：用「选择」 */
+const SELECT_FORM_TYPES = new Set([
+  'select',
+  'radio',
+  'checkbox',
+  'tree',
+  'selectInput',
+  'selectFollower',
+  'areaSelect',
+  'bankInput',
+])
+
+/**
+ * 根据 formType 推导操作语义动词：
+ *   'input'  → 文本输入
+ *   'date'   → 日期/时间选择
+ *   'select' → 枚举/下拉选择
+ *   'switch' → 开关切换
+ *   'file'   → 文件上传
+ *   null     → 未知，由调用方决定 fallback
+ */
+function getFormVerb(formType = '') {
+  if (!formType) return null
+  if (INPUT_FORM_TYPES.has(formType)) return 'input'
+  if (DATE_FORM_TYPES.has(formType)) return 'date'
+  if (SELECT_FORM_TYPES.has(formType)) return 'select'
+  if (formType === 'switch') return 'switch'
+  if (formType === 'file') return 'file'
+  return 'select' // 未知类型默认「选择」
+}
+
 function isNavigationAction(action) {
   return action === headlessActions.NAVIGATION
 }
@@ -70,7 +118,7 @@ function translateSelector(selector = '') {
   if (/amount|price|money|fee/.test(s)) return '金额输入框'
   if (/start.?date|begin.?date/.test(s)) return '开始日期'
   if (/end.?date|expir/.test(s)) return '结束日期'
-  if (/date|time/.test(s)) return '日期/时间选择'
+  if (/date|time/.test(s)) return '日期时间选择'
   if (/el-upload|upload.?input/.test(s)) return '文件上传控件'
 
   // ── 具体按钮（优先于通用按钮）
@@ -185,6 +233,42 @@ const MENU_NOISE_LABELS = new Set([
   '日期后一月',
   '日期前一年',
   '日期后一年',
+  // 通用弹窗容器——点击弹窗背景/容器本身不是有意义的业务动作
+  '弹窗',
+])
+
+/**
+ * 通用表单控件标签集合——这些 label 仅描述控件类型，不含具体业务语义。
+ * 当 click 事件的 label 落在此集合中，且下一个事件是任意交互型操作时，
+ * 该 click 视为「打开控件入口」，在操作步骤中省略（避免重复冗余步骤）。
+ * 典型场景：录制时 click 落在 .el-input 外层容器，change/keydown 落在 .el-input__inner
+ * 内层，selector 不同，原有的"同 selector 过滤"无法命中。
+ */
+const GENERIC_FORM_CLICK_LABELS = new Set([
+  '输入框',
+  '文本域',
+  '金额输入框',
+  '下拉选择框',
+  '级联选择框',
+  '日期/时间选择',
+  '日期选择',
+  '日期时间选择',
+  '日期时间选择（带时分秒）',
+  '月份选择',
+  '日期范围选择',
+  '时分选择',
+  '时分秒选择',
+  '年月日时分选择',
+  '单选框',
+  '复选框',
+  '开关',
+  '树形选择框',
+  '输入选择框',
+  '文件上传控件',
+  '文件上传框',
+  '区划选择框',
+  '银行选择框',
+  '同行人选择框',
 ])
 
 /** SVG 图标相关的 tagName（大写）*/
@@ -220,17 +304,26 @@ function isMeaningfulEvent(event) {
   // 按 tagName 过滤 SVG 图标元素（Recorder 已在 payload 中携带 tagName）
   if (event.tagName && SVG_TAG_NAMES.has(event.tagName.toUpperCase())) return false
 
-  const label = resolveLabel(event)
+  const label = normalizeTextLabel(resolveLabel(event))
 
   // 空标签 / SVG fallback 的 "use" 标签
-  if (!label || label === '"use"' || label === 'use') return false
+  if (!label || label === 'use') return false
+
+  // iconfont 私有区字符（如 ""）不具备业务语义，应过滤
+  if (PRIVATE_USE_ICON_LABEL.test(label)) return false
 
   // 已知噪音标签（结构性 Element UI 元素翻译结果）
   if (MENU_NOISE_LABELS.has(label)) return false
 
-  // translateSelector fallback 会把未知 class 名用双引号包裹，如 "el submenu title"
+  // translateSelector fallback 会把未知 class 名转成拼接的 class 片段，如 "el submenu title"
   // 这类标签仅由 CSS class 片段拼凑，不具备业务语义，统一过滤
-  if (/^"[a-z][\w\s-]{2,}"$/.test(label)) return false
+  if (
+    /^[a-z][\w\s-]{2,}$/.test(label) &&
+    /[\s_-]/.test(label) &&
+    !ACTION_BUTTON_LABELS.has(label)
+  ) {
+    return false
+  }
 
   // 加载状态类标签（"加载中"、"Loading..."等）：系统状态，不是用户操作
   if (/^(加载中|加载\.+|loading\.+|请稍候|请稍等|处理中)$/i.test(label)) return false
@@ -295,6 +388,138 @@ const ACTION_BUTTON_LABELS = new Set([
   'Confirm',
   'confirm',
 ])
+
+// Unicode Private Use Area（PUA）字符，常被 iconfont 用来显示无语义图标，如「」。
+const PRIVATE_USE_ICON_LABEL = /^[\uE000-\uF8FF]+$/
+// 边界值场景关键词：
+// 1. 英文单词需落在边界/分隔符处，避免把 "admin" 误识别为 "min"
+// 2. 同时保留 000/999 这类典型压力输入和中文「最大/最小/边界/空值」表达
+const BOUNDARY_SCENE_KEYWORD =
+  /(?:^|[\s_-])(max(?:imum)?|min(?:imum)?|limit|boundary|empty|null|overflow)(?:$|[\s_-])|0{3,}|9{3,}|最大|最小|上限|下限|边界|空值/
+
+function normalizeTextLabel(text = '') {
+  return String(text)
+    .trim()
+    .replace(/^"+|"+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function normalizePlaceholderLabel(label = '') {
+  return normalizeTextLabel(label)
+    .replace(/^[*：:\s]+/, '')
+    .replace(/[：:\s]+$/, '')
+    .replace(/(输入框|选择框|下拉选择框|下拉框|文本框|文本域|控件|按钮)$/, '')
+    .replace(/^(请)?(输入|填写|录入|补充|键入)/, '')
+    .replace(/^(请)?(选择|选取)/, '')
+    .replace(/^(请)?搜索/, '')
+    .replace(/^(请输入|请选择|请填写)$/, '')
+    .trim()
+}
+
+/**
+ * 根据 formType 返回控件类型后缀（用于拼接 placeholder）。
+ * 例：formType='textarea' → '文本域'，拼接后形如「备注文本域」。
+ * 没有对应类型时返回空字符串，不拼接。
+ */
+function getFormTypeSuffix(formType = '') {
+  if (!formType) return ''
+  if (formType === 'textarea') return '文本域'
+  if (formType === 'formatInput') return '金额输入框'
+  if (formType === 'input') return '输入框'
+  if (formType === 'date') return '日期选择'
+  if (formType === 'dateTime') return '日期时间选择'
+  if (formType === 'dateTimeSeconds') return '日期时间选择（带时分秒）'
+  if (formType === 'month') return '月份选择'
+  if (formType === 'dateRange') return '日期范围选择'
+  if (formType === 'time') return '时分选择'
+  if (formType === 'time_second') return '时分秒选择'
+  if (formType === 'date_time_minute') return '年月日时分选择'
+  if (formType === 'select') return '下拉选择框'
+  if (formType === 'radio') return '单选框'
+  if (formType === 'checkbox') return '复选框'
+  if (formType === 'switch') return '开关'
+  if (formType === 'tree') return '树形选择框'
+  if (formType === 'selectInput') return '输入选择框'
+  if (formType === 'file') return '文件上传框'
+  if (formType === 'areaSelect') return '区划选择框'
+  if (formType === 'bankInput') return '银行选择框'
+  if (formType === 'selectFollower') return '同行人选择框'
+  return ''
+}
+
+function inferGenericFieldLabel(selector = '', action = '', formType = '') {
+  // ── 优先用 formType 推断控件标签（录制层已注入时最准确）
+  if (formType) {
+    if (formType === 'textarea') return '文本域'
+    if (formType === 'formatInput') return '金额输入框'
+    if (formType === 'input') return '输入框'
+    if (formType === 'date') return '日期选择'
+    if (formType === 'dateTime') return '日期时间选择'
+    if (formType === 'dateTimeSeconds') return '日期时间选择（带时分秒）'
+    if (formType === 'month') return '月份选择'
+    if (formType === 'dateRange') return '日期范围选择'
+    if (formType === 'time') return '时分选择'
+    if (formType === 'time_second') return '时分秒选择'
+    if (formType === 'date_time_minute') return '年月日时分选择'
+    if (formType === 'select') return '下拉选择框'
+    if (formType === 'radio') return '单选框'
+    if (formType === 'checkbox') return '复选框'
+    if (formType === 'switch') return '开关'
+    if (formType === 'tree') return '树形选择框'
+    if (formType === 'selectInput') return '输入选择框'
+    if (formType === 'file') return '文件上传框'
+    if (formType === 'areaSelect') return '区划选择框'
+    if (formType === 'bankInput') return '银行选择框'
+    if (formType === 'selectFollower') return '同行人选择框'
+  }
+
+  // ── 降级：按 selector 模式匹配
+  const s = (selector || '').toLowerCase()
+
+  if (/uni[-\s_]*textarea|\btextarea\b/.test(s)) return '文本域'
+  if (/uni[-\s_]*body|\bbody\b/.test(s))
+    return ['keydown', 'change'].includes(action) ? '编辑区域' : ''
+  if (/date|time|picker|calendar/.test(s)) return '日期时间选择'
+  if (/select|dropdown|cascader/.test(s)) return '下拉选择框'
+  if (/uni[-\s_]*input|\binput\b/.test(s)) return '输入框'
+
+  return ''
+}
+
+function isGenericInputLabel(label = '') {
+  return /^(input|textarea|body|uni body|uni textarea textarea|uni textarea|uni input)$/i.test(
+    label
+  )
+}
+
+function getInputLikeLabel(event = {}) {
+  const label = normalizePlaceholderLabel(resolveLabel(event))
+  const typeSuffix = getFormTypeSuffix(event.formType)
+
+  // 有 placeholder 文本 → 拼接「placeholder + 类型后缀」，如「报销金额输入框」「备注文本域」
+  // 使用重叠去重：label 结尾与 typeSuffix 开头若有重叠则合并，避免「报销金额金额输入框」
+  if (label && !PRIVATE_USE_ICON_LABEL.test(label) && !isGenericInputLabel(label)) {
+    if (typeSuffix) {
+      // 找 label 末尾与 typeSuffix 开头的最长公共子串，去重后拼接
+      let overlap = 0
+      for (let i = Math.min(label.length, typeSuffix.length); i > 0; i--) {
+        if (label.endsWith(typeSuffix.slice(0, i))) {
+          overlap = i
+          break
+        }
+      }
+      return label + typeSuffix.slice(overlap)
+    }
+    return label
+  }
+
+  // 无 placeholder → 降级用类型推断标签（如「文本域」「日期时间选择」）
+  const generic = inferGenericFieldLabel(event.selector, event.action, event.formType)
+  if (generic) return generic
+
+  return normalizeTextLabel(translateSelector(event.selector || ''))
+}
 
 /**
  * 检测连续 click 事件是否构成菜单导航路径。
@@ -405,11 +630,39 @@ function getPageFeature(recording = []) {
 
   try {
     const url = new URL(gotoEvent.href)
-    const path = url.pathname && url.pathname !== '/' ? url.pathname : ''
-    return `${url.host}${path}`
+    const hashPath =
+      url.hash && /^#\/?/.test(url.hash) ? url.hash.replace(/^#/, '') : url.hash || ''
+    const routePath = hashPath || (url.pathname && url.pathname !== '/' ? url.pathname : '')
+    return `${url.host}${routePath}`
   } catch (error) {
     return gotoEvent.href
   }
+}
+
+function getScenarioInferText(events = []) {
+  return events
+    .map(event => `${event.label || ''} ${event.selector || ''} ${event.href || ''} ${event.value || ''}`)
+    .join(' ')
+}
+
+function getMenuPathTarget(events = []) {
+  const menuEvent = collapseMenuPath(events).find(
+    event => Array.isArray(event._menuPath) && event._menuPath.length > 0
+  )
+  return menuEvent?._menuPath?.[menuEvent._menuPath.length - 1] || ''
+}
+
+function getScreenshotTarget(events = []) {
+  const screenshotEvent = events.find(event => isScreenshotAction(event.action))
+  if (!screenshotEvent?.value) return ''
+  const translated = normalizeTextLabel(translateSelector(screenshotEvent.value))
+  return translated && translated !== screenshotEvent.value ? translated : screenshotEvent.value
+}
+
+function isSubmitLikeLabel(label = '') {
+  return /^(保存|提交|确认|确定|发布|审核|完成|登录|退出登录|注销)$/.test(
+    normalizeTextLabel(label)
+  )
 }
 
 function inferActionKeyword(text = '') {
@@ -454,23 +707,34 @@ function resolveLabel(event = {}) {
 
 function getScenarioName(events = [], pageFeature = '页面交互流程') {
   // 优先用录制时的真实标签（event.label）+ 选择器 + 带入幺的 value/href 做语义推断
-  const inferText = events
-    .map(
-      event =>
-        `${event.label || ''} ${event.selector || ''} ${event.href || ''} ${event.value || ''}`
-    )
-    .join(' ')
-
-  if (events.some(event => isScreenshotAction(event.action))) {
-    return `${pageFeature}-截图校验`
-  }
-
+  const inferText = getScenarioInferText(events)
   const keyword = inferActionKeyword(inferText)
-  if (keyword) {
-    return `${pageFeature}-${keyword}功能`
+  const menuTarget = getMenuPathTarget(events)
+  const screenshotTarget = getScreenshotTarget(events)
+  const hasFormAction = events.some(event => ['keydown', 'change', 'select', 'submit'].includes(event.action))
+  const hasNotice = events.some(event => event.action === headlessActions.NOTICE)
+
+  if (screenshotTarget) {
+    return `${pageFeature}-${screenshotTarget}截图校验`
   }
 
-  if (events.some(event => ['keydown', 'change', 'select', 'submit'].includes(event.action))) {
+  if (menuTarget && keyword && keyword !== '登录') {
+    return `${pageFeature}-${menuTarget}${hasFormAction ? keyword : '访问'}`
+  }
+
+  if (menuTarget && hasNotice) {
+    return `${pageFeature}-${menuTarget}结果确认`
+  }
+
+  if (menuTarget) {
+    return `${pageFeature}-${menuTarget}导航访问`
+  }
+
+  if (keyword) {
+    return `${pageFeature}-${keyword}${hasFormAction ? '操作' : '功能'}`
+  }
+
+  if (hasFormAction) {
     return `${pageFeature}-表单操作`
   }
 
@@ -487,13 +751,8 @@ function getScenarioName(events = [], pageFeature = '页面交互流程') {
  */
 function getCaseType(events = [], fallback = DEFAULT_CASE_TYPE) {
   // 同时纳入 event.label 和 selector，中文标签能更准确啇动局部分类规则
-  const selectors = events
-    .map(
-      event =>
-        `${event.label || ''} ${event.selector || ''} ${event.value || ''} ${event.href || ''}`
-    )
-    .join(' ')
-    .toLowerCase()
+  const selectors = getScenarioInferText(events).toLowerCase()
+  const keyword = inferActionKeyword(selectors)
 
   // 截图场景 → 回归校验性用例，归类为"功能"
   if (events.some(event => isScreenshotAction(event.action))) {
@@ -511,7 +770,7 @@ function getCaseType(events = [], fallback = DEFAULT_CASE_TYPE) {
   }
 
   // 边界相关关键词（最大值、最小值、空值等）
-  if (/max|min|limit|boundary|empty|null|0{3,}|9{3,}|overflow/.test(selectors)) {
+  if (BOUNDARY_SCENE_KEYWORD.test(selectors)) {
     return CASE_TYPES.BOUNDARY
   }
 
@@ -532,11 +791,13 @@ function getCaseType(events = [], fallback = DEFAULT_CASE_TYPE) {
   //    → 推断为校验拦截或接口异常（表单留在当前页 = 操作未成功）
   const hasSubmitClick = events.some(event => {
     if (event.action !== 'click') return false
-    const label = (event.label || resolveLabel(event)).toLowerCase()
-    return /保存|提交|确认|确定|登录|新增|创建|发布|审核/.test(label)
+    return isSubmitLikeLabel(event.label || resolveLabel(event))
   })
   const hasNavigation = events.some(event => isNavigationAction(event.action))
-  if (hasSubmitClick && !hasNavigation) {
+  const hasSuccessNotice = events.some(
+    event => event.action === headlessActions.NOTICE && ['success', 'info'].includes(event.noticeType)
+  )
+  if (hasSubmitClick && !hasNavigation && !hasSuccessNotice) {
     return CASE_TYPES.EXCEPTION
   }
   // ─────────────────────────────────────────────────────────────────────────
@@ -550,13 +811,19 @@ function getCaseType(events = [], fallback = DEFAULT_CASE_TYPE) {
     return CASE_TYPES.FUNCTION
   }
 
+  if (['查询', '新增', '编辑', '删除', '查看', '上传', '下载', '重置', '注册'].includes(keyword)) {
+    return CASE_TYPES.FUNCTION
+  }
+
   return fallback
 }
 
-function tryGetPathname(href) {
+function tryGetRouteKey(href) {
   if (!href) return null
   try {
-    return new URL(href).pathname
+    const url = new URL(href)
+    const hashPath = url.hash && /^#\/?/.test(url.hash) ? url.hash.replace(/^#/, '') : url.hash || ''
+    return `${url.host}${hashPath || url.pathname || '/'}`
   } catch (_) {
     return null
   }
@@ -565,26 +832,28 @@ function tryGetPathname(href) {
 function splitRecordingByPage(recording = []) {
   const groups = []
   let current = []
-  let currentPathname = null
+  let currentRouteKey = null
 
   recording.forEach(event => {
     // 显式页面导航（硬刷新 / 新 Tab）→ 直接分组
     if (event.action === headlessActions.GOTO) {
       if (current.length > 0) groups.push(current)
       current = [event]
-      currentPathname = tryGetPathname(event.href)
+      currentRouteKey = tryGetRouteKey(event.href)
       return
     }
 
-    // SPA 路由跳转：NAVIGATION 携带了不同 pathname → 视为新页面分组
+    // SPA 路由跳转：NAVIGATION 携带了不同 route key（host + pathname/hash）→ 视为新页面分组
     // 典型场景：/login 提交后跳转至 /dashboard
     if (event.action === headlessActions.NAVIGATION && event.href) {
-      const newPathname = tryGetPathname(event.href)
-      if (newPathname && currentPathname && newPathname !== currentPathname) {
-        if (current.length > 0) groups.push(current)
+      const newRouteKey = tryGetRouteKey(event.href)
+      if (newRouteKey && currentRouteKey && newRouteKey !== currentRouteKey) {
+        // 保留本次 NAVIGATION 给上一组，用于识别“提交后跳转成功”；
+        // 同时为下一组合成一条新的 GOTO，便于目标页独立命名。
+        if (current.length > 0) groups.push([...current, event])
         // 用路由跳转后的真实地址合成一条 GOTO，供后续场景名称提取使用
         current = [{ action: headlessActions.GOTO, href: event.href }]
-        currentPathname = newPathname
+        currentRouteKey = newRouteKey
         return // NAVIGATION 本身不再追加到 current
       }
     }
@@ -637,7 +906,11 @@ function splitPageScenarios(pageEvents = []) {
       continue
     }
 
-    if (isInteractiveAction(event.action) || isNavigationAction(event.action)) {
+    if (
+      isInteractiveAction(event.action) ||
+      isNavigationAction(event.action) ||
+      event.action === headlessActions.NOTICE
+    ) {
       current.push(event)
 
       // ── 分割触发条件 1：路由跳转/页面加载（NAVIGATION）
@@ -655,10 +928,7 @@ function splitPageScenarios(pageEvents = []) {
       //    检测：当前为提交/保存/确定/登录类点击，且下一个事件也是交互型（新场景开始）
       if (event.action === 'click' && current.some(item => isInteractiveAction(item.action))) {
         const label = resolveLabel(event)
-        // eslint-disable-next-line max-len
-        const isSubmitLikeAction = /^(保存|提交|确认|确定|发布|审核|新增|创建|添加|完成|登录|退出登录|注销)$/.test(
-          label
-        )
+        const isSubmitLikeAction = isSubmitLikeLabel(label)
         if (isSubmitLikeAction) {
           const nextEvent = pageEvents[i + 1]
           const nextIsInteractive = nextEvent && isInteractiveAction(nextEvent.action)
@@ -667,6 +937,19 @@ function splitPageScenarios(pageEvents = []) {
             scenarios.push({ type: getCaseType(current), events: current })
             current = []
           }
+        }
+      }
+
+      // ── 分割触发条件 3：提交成功提示后，后续开始新的独立交互
+      //    典型场景：保存 → success NOTICE → 点击查询/新增/菜单进入下一段流程
+      if (event.action === headlessActions.NOTICE && ['success', 'info'].includes(event.noticeType)) {
+        const hasSubmitLikeAction = current.some(
+          item => item.action === 'click' && isSubmitLikeLabel(resolveLabel(item))
+        )
+        const nextEvent = pageEvents[i + 1]
+        if (hasSubmitLikeAction && nextEvent && isInteractiveAction(nextEvent.action)) {
+          scenarios.push({ type: getCaseType(current), events: current })
+          current = []
         }
       }
     }
@@ -682,6 +965,10 @@ function splitPageScenarios(pageEvents = []) {
 function getPrecondition(recording = [], caseType = DEFAULT_CASE_TYPE) {
   const gotoEvent = recording.find(({ action }) => action === headlessActions.GOTO)
   const conditions = []
+  const inferText = getScenarioInferText(recording)
+  const keyword = inferActionKeyword(inferText)
+  const menuTarget = getMenuPathTarget(recording)
+  const screenshotTarget = getScreenshotTarget(recording)
 
   if (gotoEvent?.href) {
     conditions.push(`已进入目标页面（${gotoEvent.href}）`)
@@ -693,6 +980,22 @@ function getPrecondition(recording = [], caseType = DEFAULT_CASE_TYPE) {
   const hasInput = recording.some(event => ['keydown', 'change', 'select'].includes(event.action))
   if (hasInput) {
     conditions.push('业务前置数据已准备完成')
+  }
+
+  if (keyword === '登录') {
+    conditions.push('存在可用测试账号，且账号具备目标功能访问权限')
+  } else if (['编辑', '删除', '查看', '查询'].includes(keyword)) {
+    conditions.push('待操作业务数据已存在，且具备对应查询或维护权限')
+  } else if (['新增', '上传', '下载', '提交'].includes(keyword)) {
+    conditions.push('具备对应业务操作权限')
+  }
+
+  if (menuTarget) {
+    conditions.push(`已具备进入"${menuTarget}"功能模块的访问权限`)
+  }
+
+  if (screenshotTarget) {
+    conditions.push(`"${screenshotTarget}"区域已稳定渲染，可进行截图校验`)
   }
 
   if (caseType === CASE_TYPES.SECURITY) {
@@ -712,7 +1015,9 @@ function getEventActionText(event = {}) {
   }
 
   // resolveLabel 优先用录制时采集的真实标签，降级才用选择器翻译
-  const label = resolveLabel(event)
+  const label = ['keydown', 'change'].includes(action)
+    ? getInputLikeLabel(event)
+    : normalizeTextLabel(resolveLabel(event))
   const labelStr = label ? `"${label}"` : '该元素'
 
   switch (action) {
@@ -720,15 +1025,51 @@ function getEventActionText(event = {}) {
       return `打开页面：${href}`
     case headlessActions.VIEWPORT:
       return `设置浏览器窗口大小为 ${value?.width || 0} × ${value?.height || 0}`
-    case 'click':
+    case 'click': {
+      // 点击日期/选择类字段时，补充语义提示（录制层已注入 formType 时生效）
+      const clickVerb = getFormVerb(event.formType)
+      if (clickVerb === 'date') return `点击${labelStr}（打开日期选择）`
+      if (clickVerb === 'select') return `点击${labelStr}（展开选择）`
+      if (clickVerb === 'file') return `点击${labelStr}（选择文件）`
       return `点击${labelStr}`
+    }
     case 'keydown':
       return value ? `在${labelStr}中输入"${value}"` : `在${labelStr}中进行输入操作`
-    case 'change':
+    case 'change': {
+      // switch 翻转状态
+      if (event.formType === 'switch') {
+        return event.checked !== false ? `开启${labelStr}` : `关闭${labelStr}`
+      }
+      // checkbox / radio：勾选状态
       if (event.checked !== undefined) {
         return event.checked ? `勾选${labelStr}` : `取消勾选${labelStr}`
       }
-      return `在${labelStr}中选择"${value}"`
+      // file 上传
+      if (event.formType === 'file') {
+        return value ? `上传文件至${labelStr}：「${value}」` : `选择并上传文件至${labelStr}`
+      }
+      // 文本输入类（INPUT / TEXTAREA / FORMAT_INPUT）：用「输入」
+      const changeVerb = getFormVerb(event.formType)
+      if (changeVerb === 'input') {
+        return value ? `在${labelStr}中输入"${value}"` : `在${labelStr}中进行输入操作`
+      }
+      // 日期/时间类：用「选择日期/时间」
+      if (changeVerb === 'date') {
+        return value ? `在${labelStr}中选择"${value}"` : `在${labelStr}中选择日期/时间`
+      }
+      // 其余（SELECT / RADIO / TREE 等）：用「选择」
+      // 无 formType 时：从已解析的 label 推断——label 以「输入框/文本域」结尾 → 文本输入
+      if (!event.formType) {
+        const guessLabel = getInputLikeLabel(event)
+        if (/输入框$|文本域$/.test(guessLabel)) {
+          return value ? `在${labelStr}中输入"${value}"` : `在${labelStr}中进行输入操作`
+        }
+        if (/日期|时间|月份/.test(guessLabel)) {
+          return value ? `在${labelStr}中选择"${value}"` : `在${labelStr}中选择日期/时间`
+        }
+      }
+      return value ? `在${labelStr}中选择"${value}"` : `在${labelStr}中进行选择操作`
+    }
     case headlessActions.NAVIGATION:
       return '等待页面加载完成'
     case headlessActions.SCREENSHOT:
@@ -741,7 +1082,9 @@ function getEventActionText(event = {}) {
 function getEventExpectationText(event = {}, caseType = DEFAULT_CASE_TYPE) {
   const { action, value, href } = event
   // 优先使用录制时的真实标签
-  const label = resolveLabel(event)
+  const label = ['keydown', 'change'].includes(action)
+    ? getInputLikeLabel(event)
+    : normalizeTextLabel(resolveLabel(event))
 
   // 菜单导航路径的预期：进入最终目标功能模块
   if (event._menuPath) {
@@ -795,14 +1138,43 @@ function getEventExpectationText(event = {}, caseType = DEFAULT_CASE_TYPE) {
     }
     case 'keydown':
       return `"${label || '输入框'}"成功录入"${value || '操作内容'}"`
-    case 'change':
-      // checkbox / radio：使用勾选/取消语义
+    case 'change': {
+      // switch 翻转
+      if (event.formType === 'switch') {
+        return event.checked !== false ? `"${label || '开关'}"已开启` : `"${label || '开关'}"已关闭`
+      }
+      // checkbox / radio：勾选语义
       if (event.checked !== undefined) {
         return event.checked
           ? `"${label || '复选框'}"勾选成功`
           : `"${label || '复选框'}"取消勾选成功`
       }
+      // file 上传
+      if (event.formType === 'file') {
+        return `文件已选择并成功上传至"${label || '文件上传框'}"`
+      }
+      // 文本输入类：录入成功
+      const expVerb = getFormVerb(event.formType)
+      if (expVerb === 'input') {
+        return `"${label || '输入框'}"成功录入"${value || '操作内容'}"`
+      }
+      // 日期类
+      if (expVerb === 'date') {
+        return `"${label || '日期选择'}"已选中日期"${value}"`
+      }
+      // 其余选择类
+      // 无 formType 时：从 label 推断，避免把文本输入误描述为「选中」
+      if (!event.formType) {
+        const guessLabel = getInputLikeLabel(event)
+        if (/输入框$|文本域$/.test(guessLabel)) {
+          return `"${label || '输入框'}"成功录入"${value || '操作内容'}"`
+        }
+        if (/日期|时间|月份/.test(guessLabel)) {
+          return `"${label || '日期选择'}"已选中日期"${value}"`
+        }
+      }
       return `"${label || '下拉框'}"成功选中"${value}"`
+    }
     case headlessActions.NAVIGATION:
       return '页面跳转并加载成功'
     case headlessActions.SCREENSHOT:
@@ -819,45 +1191,54 @@ function listText(items = [], fallback = '无') {
 }
 
 function getTestData(recording = []) {
-  function extractFieldName(event) {
-    // 优先用录制时的真实标签（已经是人类可读的字段名）
-    const live = (event.label || '').trim()
-    if (live) {
-      // 去掉尾部「输入框/选择框/控件」等对字段名无意义的后缀
-      return live.replace(/(输入框|选择框|下拉选择框|控件|按钮)$/, '').trim() || live
-    }
-    // 降级：用 translateSelector 并去后缀
-    const raw = translateSelector(event.selector || '')
-    return (
-      raw
-        .replace(/(输入框|选择框|下拉选择框|控件|按钮)$/, '')
-        .replace(/^"|"$/g, '')
-        .trim() || event.selector
-    )
-  }
+  const rows = new Map()
+  const screenshots = new Set()
 
-  const rows = recording.reduce((result, event) => {
+  deduplicateEvents(recording).forEach(event => {
     if (event.action === 'keydown' && event.selector && event.value) {
-      // 优先使用录制时字段标签，对应改进方向第 5 条
-      const fieldName = extractFieldName(event)
-      result.push(`${fieldName}：${event.value}`)
+      const fieldName = getInputLikeLabel(event)
+      const key = `input:${event.selector || fieldName}`
+      rows.delete(key)
+      rows.set(key, `${fieldName}：${event.value}`)
     }
 
-    if (event.action === 'change' && event.selector && event.value) {
+    if (event.action === 'change' && event.selector) {
+      const fieldName = getInputLikeLabel(event)
+      const changeVerb = getFormVerb(event.formType)
+      const hasValue =
+        (event.value !== undefined && event.value !== null && event.value !== '') ||
+        event.checked !== undefined
+
+      if (!hasValue) return
+      if (event.formType === 'switch' && event.checked !== undefined) {
+        const key = `switch:${event.selector || fieldName}`
+        rows.delete(key)
+        rows.set(key, `${fieldName}：${event.checked ? '开启' : '关闭'}`)
+        return
+      }
+
       // checkbox / radio 的 change 没有有意义的"测试数据"（checked 状态不是数据）
-      if (event.checked !== undefined) return result
-      const fieldName = extractFieldName(event)
-      result.push(`${fieldName}（选择）：${event.value}`)
+      if (event.checked !== undefined) return
+
+      const key = `change:${event.selector || fieldName}`
+      rows.delete(key)
+      if (event.formType === 'file') {
+        rows.set(key, `${fieldName}（上传）：${event.value}`)
+        return
+      }
+      if (changeVerb === 'input') {
+        rows.set(key, `${fieldName}：${event.value}`)
+        return
+      }
+      rows.set(key, `${fieldName}（选择）：${event.value}`)
     }
 
     if (event.action === headlessActions.SCREENSHOT) {
-      result.push(event.value ? `截图对象：${event.value}` : '截图对象：整页')
+      screenshots.add(event.value ? `截图对象：${event.value}` : '截图对象：整页')
     }
+  })
 
-    return result
-  }, [])
-
-  return Array.from(new Set(rows)).join('；') || '无特殊测试数据'
+  return [...rows.values(), ...screenshots].join('；') || '无特殊测试数据'
 }
 
 /**
@@ -871,6 +1252,45 @@ function isHumanStep(event, index, arr) {
   if (event.action === headlessActions.NAVIGATION) return false
   // NOTICE 是系统弹出的通知，属于"预期结果"而非"操作步骤"
   if (event.action === headlessActions.NOTICE) return false
+  // 过滤「打开控件入口」click：
+  //   a. 同 selector：click → keydown/change（内层 selector 相同）
+  //   b. 不同 selector：click 的 label 是通用控件类型标签（如「输入框」「日期选择」），
+  //      且下一个事件是交互型操作 → 该 click 仅为打开控件的入口，省略
+  //   c. 录制层已注入 formType 的选择/日期类控件：click 后接 change，省略 click
+  if (event.action === 'click') {
+    const next = arr[index + 1]
+    // case a：同 selector 相邻 click → keydown/change
+    if (
+      next &&
+      ['keydown', 'change'].includes(next.action) &&
+      event.selector &&
+      next.selector &&
+      event.selector === next.selector
+    ) {
+      return false
+    }
+    // case b：label 是通用控件类型标签 → 省略（下一步是任意交互操作时）
+    if (next && isInteractiveAction(next.action)) {
+      const clickLabel = normalizeTextLabel(resolveLabel(event))
+      if (GENERIC_FORM_CLICK_LABELS.has(clickLabel)) return false
+      // label 含类型后缀（如「备注输入框」「单位下拉选择框」）也属于控件入口，省略
+      if (
+        [...GENERIC_FORM_CLICK_LABELS].some(
+          suffix => clickLabel.endsWith(suffix) && clickLabel !== suffix
+        )
+      )
+        return false
+    }
+    // case c：formType 标注的选择/日期类控件，click 后接 change
+    if (
+      event.formType &&
+      (SELECT_FORM_TYPES.has(event.formType) || DATE_FORM_TYPES.has(event.formType)) &&
+      next &&
+      next.action === 'change'
+    ) {
+      return false
+    }
+  }
   // GOTO 只保留场景内第一次出现（去掉因冒泡等产生的重复 GOTO）
   if (event.action === headlessActions.GOTO) {
     return arr.findIndex(e => e.action === headlessActions.GOTO) === index
@@ -886,6 +1306,37 @@ function isHumanStep(event, index, arr) {
 function isExpectationRelevant(event, index, arr) {
   if (event.action === headlessActions.VIEWPORT) return false
   if (event.action === headlessActions.NAVIGATION) return false
+  if (event.action === 'click') {
+    const next = arr[index + 1]
+    if (
+      next &&
+      ['keydown', 'change'].includes(next.action) &&
+      event.selector &&
+      next.selector &&
+      event.selector === next.selector
+    ) {
+      return false
+    }
+    if (next && isInteractiveAction(next.action)) {
+      const clickLabel = normalizeTextLabel(resolveLabel(event))
+      if (GENERIC_FORM_CLICK_LABELS.has(clickLabel)) return false
+      if (
+        [...GENERIC_FORM_CLICK_LABELS].some(
+          suffix => clickLabel.endsWith(suffix) && clickLabel !== suffix
+        )
+      ) {
+        return false
+      }
+    }
+    if (
+      event.formType &&
+      (SELECT_FORM_TYPES.has(event.formType) || DATE_FORM_TYPES.has(event.formType)) &&
+      next &&
+      next.action === 'change'
+    ) {
+      return false
+    }
+  }
   if (event.action === headlessActions.GOTO) {
     return arr.findIndex(e => e.action === headlessActions.GOTO) === index
   }
@@ -977,12 +1428,14 @@ export function buildTestCase(recording = [], index = 1, meta = {}) {
     : rawFeature
 
   // 用例标题：对齐示例「登录-边界值测试-密码为6位数字」风格（改进方向第 6/7 条）
-  const keyword = inferActionKeyword(
-    recording
-      .map(e => `${e.label || ''} ${e.selector || ''} ${e.value || ''} ${e.href || ''}`)
-      .join(' ')
-  )
-  const featureLabel = keyword || feature
+  const keyword = inferActionKeyword(getScenarioInferText(recording))
+  const menuTarget = getMenuPathTarget(recording)
+  const screenshotTarget = getScreenshotTarget(recording)
+  const featureLabel = screenshotTarget
+    ? `${screenshotTarget}截图`
+    : menuTarget && keyword && keyword !== '登录'
+    ? `${menuTarget}${keyword}`
+    : menuTarget || keyword || feature
 
   // 提取输入的具体测试数据，拼到标题末尾（如「密码：123456」→「123456」）
   const firstInput = recording.find(e => e.action === 'keydown' && e.value)

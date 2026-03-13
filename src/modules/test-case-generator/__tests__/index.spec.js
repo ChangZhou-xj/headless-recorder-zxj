@@ -56,7 +56,7 @@ describe('TestCaseGenerator', () => {
         action: 'keydown',
         selector: '.el-form > .is-required > .el-input__inner',
         value: 'admin',
-        label: '用户名',  // Recorder 从 <label> 或 placeholder 采集
+        label: '用户名', // Recorder 从 <label> 或 placeholder 采集
       },
       {
         action: 'keydown',
@@ -67,7 +67,7 @@ describe('TestCaseGenerator', () => {
       {
         action: 'click',
         selector: '.sys-password-login .el-button',
-        label: '登录',   // Recorder 从 button textContent 采集
+        label: '登录', // Recorder 从 button textContent 采集
       },
       { action: headlessActions.NAVIGATION },
     ])
@@ -130,7 +130,11 @@ describe('TestCaseGenerator', () => {
       // SVG use 图标（tagName=USE，应被过滤）
       { action: 'click', selector: 'li.menu > span > svg > use', tagName: 'USE', label: '' },
       // el-icon-arrow-down 上溯成功：_getElementLabel 已取到父菜单标题，label 为真实业务名
-      { action: 'click', selector: '.el-submenu__icon-arrow.el-icon-arrow-down', label: '绩效配置' },
+      {
+        action: 'click',
+        selector: '.el-submenu__icon-arrow.el-icon-arrow-down',
+        label: '绩效配置',
+      },
       // el-icon-arrow-right 上溯失败（父元素无文字），translateSelector 翻译为"展开箭头"，应被过滤
       { action: 'click', selector: '.el-icon-arrow-right', label: '' },
       // 侧边栏菜单容器（MENU_NOISE_LABELS 命中，应被过滤）
@@ -261,5 +265,250 @@ describe('TestCaseGenerator', () => {
     // ── 断言 5：两条 TC 的"功能"字段分别包含各自的路由路径（不能混淆）
     expect(loginRow['功能']).not.toContain('dashboard')
     expect(dashRow['功能']).not.toContain('login')
+  })
+
+  test('uni-app 占位提示会被规范化为明确字段名，重复输入仅保留最终测试数据', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/reimburse' },
+      { action: headlessActions.NAVIGATION },
+      { action: 'click', selector: 'uni textarea textarea', label: '' },
+      { action: 'click', selector: 'uni textarea textarea', label: '请输入报销事由' },
+      {
+        action: 'keydown',
+        selector: 'uni textarea textarea',
+        value: '申请测试',
+        label: '请输入报销事由',
+      },
+      {
+        action: 'keydown',
+        selector: 'uni textarea textarea',
+        value: '申请测试录制',
+        label: '请输入报销事由',
+      },
+      {
+        action: 'change',
+        selector: 'uni-picker .uni-picker__input',
+        value: '日常报销',
+        label: '请选择报销类型',
+      },
+    ])
+
+    expect(testCase['测试数据']).toBe('报销事由：申请测试录制；报销类型（选择）：日常报销')
+    expect(testCase['操作步骤']).toContain('在"报销事由"中输入"申请测试录制"')
+    expect(testCase['操作步骤']).toContain('在"报销类型"中选择"日常报销"')
+    expect(testCase['操作步骤']).not.toContain('申请测试；')
+    expect(testCase['操作步骤']).not.toContain('')
+    expect(testCase['操作步骤']).not.toContain('点击"请输入报销事由"')
+  })
+
+  test('uni-app 通用 textarea/body 选择器会输出更易懂的字段名称', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/editor' },
+      { action: 'keydown', selector: 'uni textarea textarea', value: '申请说明', label: '' },
+      { action: 'keydown', selector: 'body', value: '补充备注', label: '' },
+    ])
+
+    expect(testCase['测试数据']).toContain('文本域：申请说明')
+    expect(testCase['测试数据']).toContain('编辑区域：补充备注')
+    expect(testCase['操作步骤']).toContain('在"文本域"中输入"申请说明"')
+    expect(testCase['操作步骤']).toContain('在"编辑区域"中输入"补充备注"')
+    expect(testCase['操作步骤']).not.toContain('uni textarea textarea')
+    expect(testCase['操作步骤']).not.toContain('""body""')
+  })
+
+  test('hash 路由变化也会触发跨页面拆分，并为导航场景生成更具体标题与前置条件', () => {
+    const generator = new TestCaseGenerator()
+    const rows = generator.generate([
+      { action: headlessActions.GOTO, href: 'https://example.com/#/login' },
+      { action: 'keydown', selector: '#username', value: 'admin', label: '用户名' },
+      { action: 'click', selector: '.login-btn', label: '登录' },
+      { action: headlessActions.NAVIGATION, href: 'https://example.com/#/dashboard' },
+      { action: 'click', selector: '.menu-root', label: '绩效管理' },
+      { action: 'click', selector: '.menu-leaf', label: '绩效配置' },
+    ])
+
+    const loginRow = rows.find(
+      row => row['功能'] && row['功能'].includes('example.com/login') && row['操作步骤'].includes('登录')
+    )
+    const dashboardRow = rows.find(
+      row =>
+        row['功能'] &&
+        row['功能'].includes('example.com/dashboard') &&
+        row['操作步骤'].includes('绩效管理 → 绩效配置')
+    )
+
+    expect(loginRow).toBeTruthy()
+    expect(loginRow['用例标题']).toContain('登录-')
+    expect(loginRow['前置条件']).toContain('存在可用测试账号')
+
+    expect(dashboardRow).toBeTruthy()
+    expect(dashboardRow['功能']).toContain('绩效配置导航访问')
+    expect(dashboardRow['用例标题']).toContain('绩效配置-')
+    expect(dashboardRow['前置条件']).toContain('已具备进入"绩效配置"功能模块的访问权限')
+  })
+
+  test('iframe 内点击下一步后触发的路由变化，不会丢失后续步骤', () => {
+    const generator = new TestCaseGenerator()
+    const rows = generator.generate([
+      { action: headlessActions.GOTO, href: 'https://example.com/form' },
+      { action: 'click', selector: '.iframe-step-next', label: '下一步', frameId: 2 },
+      {
+        action: headlessActions.NAVIGATION,
+        href: 'https://example.com/form/step-2',
+        frameId: 2,
+      },
+      { action: 'keydown', selector: '#mobile', value: '13800138000', label: '手机号', frameId: 2 },
+      { action: 'click', selector: '.submit-btn', label: '提交', frameId: 2 },
+    ])
+
+    const nextRow = rows.find(
+      row => row['功能'] && row['功能'].includes('/form') && row['操作步骤'].includes('下一步')
+    )
+    const stepTwoRow = rows.find(
+      row => row['功能'] && row['功能'].includes('/form/step-2') && row['操作步骤'].includes('手机号')
+    )
+
+    expect(nextRow).toBeTruthy()
+    expect(nextRow['操作步骤']).toContain('点击"下一步"')
+
+    expect(stepTwoRow).toBeTruthy()
+    expect(stepTwoRow['操作步骤']).toContain('在"手机号"中输入"13800138000"')
+    expect(stepTwoRow['操作步骤']).toContain('点击"提交"')
+    expect(stepTwoRow['测试数据']).toContain('手机号：13800138000')
+  })
+
+  test('截图场景会生成更具体的标题和前置条件文案', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/report' },
+      { action: headlessActions.SCREENSHOT, value: '结果面板' },
+    ])
+
+    expect(testCase['功能']).toContain('结果面板截图校验')
+    expect(testCase['用例标题']).toContain('结果面板截图-')
+    expect(testCase['前置条件']).toContain('"结果面板"区域已稳定渲染，可进行截图校验')
+    expect(testCase['测试数据']).toContain('截图对象：结果面板')
+  })
+
+  test('保存成功提示后开始的新交互会被拆分为独立场景，并改进查询类用例分类与前置条件', () => {
+    const generator = new TestCaseGenerator()
+    const rows = generator.generate([
+      { action: headlessActions.GOTO, href: 'https://example.com/order' },
+      { action: 'click', selector: '.add-btn', label: '新增' },
+      { action: 'keydown', selector: '#name', value: '测试订单', label: '订单名称' },
+      { action: 'click', selector: '.save-btn', label: '保存' },
+      { action: headlessActions.NOTICE, noticeType: 'success', value: '保存成功' },
+      { action: 'click', selector: '.search-btn', label: '搜索' },
+      { action: headlessActions.NAVIGATION },
+    ])
+
+    const createRow = rows.find(
+      row => row['功能'] && row['功能'].includes('新增操作') && row['操作步骤'].includes('测试订单')
+    )
+    const queryRow = rows.find(
+      row => row['功能'] && row['功能'].includes('查询功能') && row['操作步骤'].includes('点击"搜索"')
+    )
+
+    expect(createRow).toBeTruthy()
+    expect(createRow['预期结果']).toContain('保存成功')
+
+    expect(queryRow).toBeTruthy()
+    expect(queryRow['用例类型']).toBe('功能')
+    expect(queryRow['前置条件']).toContain('待操作业务数据已存在，且具备对应查询或维护权限')
+    expect(queryRow['用例标题']).toContain('查询-功能正常')
+  })
+
+  test('formType 会驱动输入类 change 使用“输入”动词并带上控件后缀', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/expense' },
+      {
+        action: 'change',
+        selector: '.amount-input',
+        formType: 'formatInput',
+        value: '200',
+        label: '请输入报销金额',
+      },
+    ])
+
+    expect(testCase['测试数据']).toContain('报销金额输入框：200')
+    expect(testCase['操作步骤']).toContain('在"报销金额输入框"中输入"200"')
+    expect(testCase['操作步骤']).not.toContain('在"报销金额输入框"中选择"200"')
+    expect(testCase['预期结果']).toContain('"报销金额输入框"成功录入"200"')
+  })
+
+  test('formType 会驱动日期、开关与文件上传的步骤和预期结果文案', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/apply' },
+      {
+        action: 'change',
+        selector: '.travel-date',
+        formType: 'dateTime',
+        value: '2026-03-13 10:00',
+        label: '请选择出发时间',
+      },
+      {
+        action: 'change',
+        selector: '.need-invoice',
+        formType: 'switch',
+        checked: true,
+        label: '是否开票',
+      },
+      {
+        action: 'change',
+        selector: '.upload-proof',
+        formType: 'file',
+        value: 'invoice.png',
+        label: '上传凭证',
+      },
+    ])
+
+    expect(testCase['测试数据']).toContain('出发时间日期时间选择（选择）：2026-03-13 10:00')
+    expect(testCase['测试数据']).toContain('是否开票开关：开启')
+    expect(testCase['测试数据']).toContain('上传凭证文件上传框（上传）：invoice.png')
+    expect(testCase['操作步骤']).toContain('在"出发时间日期时间选择"中选择"2026-03-13 10:00"')
+    expect(testCase['操作步骤']).toContain('开启"是否开票开关"')
+    expect(testCase['操作步骤']).toContain('上传文件至"上传凭证文件上传框"：「invoice.png」')
+    expect(testCase['预期结果']).toContain('"出发时间日期时间选择"已选中日期"2026-03-13 10:00"')
+    expect(testCase['预期结果']).toContain('"是否开票开关"已开启')
+    expect(testCase['预期结果']).toContain('文件已选择并成功上传至"上传凭证文件上传框"')
+    expect(testCase['预期结果']).not.toContain('点击"请选择出发时间"后页面正常响应')
+  })
+
+  test('选择/日期类字段的打开面板 click 步骤会在紧随 change 时被省略', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/booking' },
+      {
+        action: 'click',
+        selector: '.date-trigger',
+        formType: 'dateTime',
+        label: '请选择出发时间',
+      },
+      {
+        action: 'change',
+        selector: '.date-panel input',
+        formType: 'dateTime',
+        value: '2026-03-13 10:00',
+        label: '请选择出发时间',
+      },
+      {
+        action: 'click',
+        selector: '.type-trigger',
+        formType: 'select',
+        label: '请选择报销类型',
+      },
+      {
+        action: 'change',
+        selector: '.type-panel',
+        formType: 'select',
+        value: '日常报销',
+        label: '请选择报销类型',
+      },
+    ])
+
+    expect(testCase['操作步骤']).toContain('在"出发时间日期时间选择"中选择"2026-03-13 10:00"')
+    expect(testCase['操作步骤']).toContain('在"报销类型下拉选择框"中选择"日常报销"')
+    expect(testCase['操作步骤']).not.toContain('点击"请选择出发时间"（打开日期选择）')
+    expect(testCase['操作步骤']).not.toContain('点击"请选择报销类型"（展开选择）')
+    expect(testCase['预期结果']).not.toContain('点击"请选择出发时间"后页面正常响应')
+    expect(testCase['预期结果']).not.toContain('点击"请选择报销类型"后页面正常响应')
   })
 })

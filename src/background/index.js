@@ -7,7 +7,7 @@ import { headlessActions } from '@/modules/code-generator/constants'
 
 import CodeGenerator from '@/modules/code-generator'
 
-class Background {
+export class Background {
   constructor() {
     this._recording = []
     this._boundedMessageHandler = null
@@ -331,6 +331,7 @@ class Background {
     } else {
       // iframe 导航：使用事件自带的 tabId 注入到该具体帧，避免 getActiveTab() 因切换标签蝟而注入错误 tab
       await browser.injectContentScriptIntoFrame(frameId, tabId)
+      this.recordNavigation(url)
     }
   }
 
