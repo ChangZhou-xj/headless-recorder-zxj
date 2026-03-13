@@ -251,7 +251,6 @@ const GENERIC_FORM_CLICK_LABELS = new Set([
   '下拉选择框',
   '级联选择框',
   '日期/时间选择',
-  '日期时间选择',
   '日期选择',
   '日期时间选择',
   '日期时间选择（带时分秒）',
@@ -392,6 +391,11 @@ const ACTION_BUTTON_LABELS = new Set([
 
 // Unicode Private Use Area（PUA）字符，常被 iconfont 用来显示无语义图标，如「」。
 const PRIVATE_USE_ICON_LABEL = /^[\uE000-\uF8FF]+$/
+// 边界值场景关键词：
+// 1. 英文单词需落在边界/分隔符处，避免把 "admin" 误识别为 "min"
+// 2. 同时保留 000/999 这类典型压力输入和中文「最大/最小/边界/空值」表达
+const BOUNDARY_SCENE_KEYWORD =
+  /(?:^|[\s_-])(max(?:imum)?|min(?:imum)?|limit|boundary|empty|null|overflow)(?:$|[\s_-])|0{3,}|9{3,}|最大|最小|上限|下限|边界|空值/
 
 function normalizeTextLabel(text = '') {
   return String(text)
@@ -626,11 +630,39 @@ function getPageFeature(recording = []) {
 
   try {
     const url = new URL(gotoEvent.href)
-    const path = url.pathname && url.pathname !== '/' ? url.pathname : ''
-    return `${url.host}${path}`
+    const hashPath =
+      url.hash && /^#\/?/.test(url.hash) ? url.hash.replace(/^#/, '') : url.hash || ''
+    const routePath = hashPath || (url.pathname && url.pathname !== '/' ? url.pathname : '')
+    return `${url.host}${routePath}`
   } catch (error) {
     return gotoEvent.href
   }
+}
+
+function getScenarioInferText(events = []) {
+  return events
+    .map(event => `${event.label || ''} ${event.selector || ''} ${event.href || ''} ${event.value || ''}`)
+    .join(' ')
+}
+
+function getMenuPathTarget(events = []) {
+  const menuEvent = collapseMenuPath(events).find(
+    event => Array.isArray(event._menuPath) && event._menuPath.length > 0
+  )
+  return menuEvent?._menuPath?.[menuEvent._menuPath.length - 1] || ''
+}
+
+function getScreenshotTarget(events = []) {
+  const screenshotEvent = events.find(event => isScreenshotAction(event.action))
+  if (!screenshotEvent?.value) return ''
+  const translated = normalizeTextLabel(translateSelector(screenshotEvent.value))
+  return translated && translated !== screenshotEvent.value ? translated : screenshotEvent.value
+}
+
+function isSubmitLikeLabel(label = '') {
+  return /^(保存|提交|确认|确定|发布|审核|完成|登录|退出登录|注销)$/.test(
+    normalizeTextLabel(label)
+  )
 }
 
 function inferActionKeyword(text = '') {
@@ -675,23 +707,34 @@ function resolveLabel(event = {}) {
 
 function getScenarioName(events = [], pageFeature = '页面交互流程') {
   // 优先用录制时的真实标签（event.label）+ 选择器 + 带入幺的 value/href 做语义推断
-  const inferText = events
-    .map(
-      event =>
-        `${event.label || ''} ${event.selector || ''} ${event.href || ''} ${event.value || ''}`
-    )
-    .join(' ')
-
-  if (events.some(event => isScreenshotAction(event.action))) {
-    return `${pageFeature}-截图校验`
-  }
-
+  const inferText = getScenarioInferText(events)
   const keyword = inferActionKeyword(inferText)
-  if (keyword) {
-    return `${pageFeature}-${keyword}功能`
+  const menuTarget = getMenuPathTarget(events)
+  const screenshotTarget = getScreenshotTarget(events)
+  const hasFormAction = events.some(event => ['keydown', 'change', 'select', 'submit'].includes(event.action))
+  const hasNotice = events.some(event => event.action === headlessActions.NOTICE)
+
+  if (screenshotTarget) {
+    return `${pageFeature}-${screenshotTarget}截图校验`
   }
 
-  if (events.some(event => ['keydown', 'change', 'select', 'submit'].includes(event.action))) {
+  if (menuTarget && keyword && keyword !== '登录') {
+    return `${pageFeature}-${menuTarget}${hasFormAction ? keyword : '访问'}`
+  }
+
+  if (menuTarget && hasNotice) {
+    return `${pageFeature}-${menuTarget}结果确认`
+  }
+
+  if (menuTarget) {
+    return `${pageFeature}-${menuTarget}导航访问`
+  }
+
+  if (keyword) {
+    return `${pageFeature}-${keyword}${hasFormAction ? '操作' : '功能'}`
+  }
+
+  if (hasFormAction) {
     return `${pageFeature}-表单操作`
   }
 
@@ -708,13 +751,8 @@ function getScenarioName(events = [], pageFeature = '页面交互流程') {
  */
 function getCaseType(events = [], fallback = DEFAULT_CASE_TYPE) {
   // 同时纳入 event.label 和 selector，中文标签能更准确啇动局部分类规则
-  const selectors = events
-    .map(
-      event =>
-        `${event.label || ''} ${event.selector || ''} ${event.value || ''} ${event.href || ''}`
-    )
-    .join(' ')
-    .toLowerCase()
+  const selectors = getScenarioInferText(events).toLowerCase()
+  const keyword = inferActionKeyword(selectors)
 
   // 截图场景 → 回归校验性用例，归类为"功能"
   if (events.some(event => isScreenshotAction(event.action))) {
@@ -732,7 +770,7 @@ function getCaseType(events = [], fallback = DEFAULT_CASE_TYPE) {
   }
 
   // 边界相关关键词（最大值、最小值、空值等）
-  if (/max|min|limit|boundary|empty|null|0{3,}|9{3,}|overflow/.test(selectors)) {
+  if (BOUNDARY_SCENE_KEYWORD.test(selectors)) {
     return CASE_TYPES.BOUNDARY
   }
 
@@ -754,10 +792,13 @@ function getCaseType(events = [], fallback = DEFAULT_CASE_TYPE) {
   const hasSubmitClick = events.some(event => {
     if (event.action !== 'click') return false
     const label = (event.label || resolveLabel(event)).toLowerCase()
-    return /保存|提交|确认|确定|登录|新增|创建|发布|审核/.test(label)
+    return /保存|提交|确认|确定|登录|发布|审核|完成/.test(label)
   })
   const hasNavigation = events.some(event => isNavigationAction(event.action))
-  if (hasSubmitClick && !hasNavigation) {
+  const hasSuccessNotice = events.some(
+    event => event.action === headlessActions.NOTICE && ['success', 'info'].includes(event.noticeType)
+  )
+  if (hasSubmitClick && !hasNavigation && !hasSuccessNotice) {
     return CASE_TYPES.EXCEPTION
   }
   // ─────────────────────────────────────────────────────────────────────────
@@ -771,13 +812,19 @@ function getCaseType(events = [], fallback = DEFAULT_CASE_TYPE) {
     return CASE_TYPES.FUNCTION
   }
 
+  if (['查询', '新增', '编辑', '删除', '查看', '上传', '下载', '重置', '注册'].includes(keyword)) {
+    return CASE_TYPES.FUNCTION
+  }
+
   return fallback
 }
 
-function tryGetPathname(href) {
+function tryGetRouteKey(href) {
   if (!href) return null
   try {
-    return new URL(href).pathname
+    const url = new URL(href)
+    const hashPath = url.hash && /^#\/?/.test(url.hash) ? url.hash.replace(/^#/, '') : url.hash || ''
+    return `${url.host}${hashPath || url.pathname || '/'}`
   } catch (_) {
     return null
   }
@@ -786,26 +833,28 @@ function tryGetPathname(href) {
 function splitRecordingByPage(recording = []) {
   const groups = []
   let current = []
-  let currentPathname = null
+  let currentRouteKey = null
 
   recording.forEach(event => {
     // 显式页面导航（硬刷新 / 新 Tab）→ 直接分组
     if (event.action === headlessActions.GOTO) {
       if (current.length > 0) groups.push(current)
       current = [event]
-      currentPathname = tryGetPathname(event.href)
+      currentRouteKey = tryGetRouteKey(event.href)
       return
     }
 
-    // SPA 路由跳转：NAVIGATION 携带了不同 pathname → 视为新页面分组
+    // SPA 路由跳转：NAVIGATION 携带了不同 route key（host + pathname/hash）→ 视为新页面分组
     // 典型场景：/login 提交后跳转至 /dashboard
     if (event.action === headlessActions.NAVIGATION && event.href) {
-      const newPathname = tryGetPathname(event.href)
-      if (newPathname && currentPathname && newPathname !== currentPathname) {
-        if (current.length > 0) groups.push(current)
+      const newRouteKey = tryGetRouteKey(event.href)
+      if (newRouteKey && currentRouteKey && newRouteKey !== currentRouteKey) {
+        // 保留本次 NAVIGATION 给上一组，用于识别“提交后跳转成功”；
+        // 同时为下一组合成一条新的 GOTO，便于目标页独立命名。
+        if (current.length > 0) groups.push([...current, event])
         // 用路由跳转后的真实地址合成一条 GOTO，供后续场景名称提取使用
         current = [{ action: headlessActions.GOTO, href: event.href }]
-        currentPathname = newPathname
+        currentRouteKey = newRouteKey
         return // NAVIGATION 本身不再追加到 current
       }
     }
@@ -858,7 +907,11 @@ function splitPageScenarios(pageEvents = []) {
       continue
     }
 
-    if (isInteractiveAction(event.action) || isNavigationAction(event.action)) {
+    if (
+      isInteractiveAction(event.action) ||
+      isNavigationAction(event.action) ||
+      event.action === headlessActions.NOTICE
+    ) {
       current.push(event)
 
       // ── 分割触发条件 1：路由跳转/页面加载（NAVIGATION）
@@ -876,10 +929,7 @@ function splitPageScenarios(pageEvents = []) {
       //    检测：当前为提交/保存/确定/登录类点击，且下一个事件也是交互型（新场景开始）
       if (event.action === 'click' && current.some(item => isInteractiveAction(item.action))) {
         const label = resolveLabel(event)
-        // eslint-disable-next-line max-len
-        const isSubmitLikeAction = /^(保存|提交|确认|确定|发布|审核|新增|创建|添加|完成|登录|退出登录|注销)$/.test(
-          label
-        )
+        const isSubmitLikeAction = isSubmitLikeLabel(label)
         if (isSubmitLikeAction) {
           const nextEvent = pageEvents[i + 1]
           const nextIsInteractive = nextEvent && isInteractiveAction(nextEvent.action)
@@ -888,6 +938,19 @@ function splitPageScenarios(pageEvents = []) {
             scenarios.push({ type: getCaseType(current), events: current })
             current = []
           }
+        }
+      }
+
+      // ── 分割触发条件 3：提交成功提示后，后续开始新的独立交互
+      //    典型场景：保存 → success NOTICE → 点击查询/新增/菜单进入下一段流程
+      if (event.action === headlessActions.NOTICE && ['success', 'info'].includes(event.noticeType)) {
+        const hasSubmitLikeAction = current.some(
+          item => item.action === 'click' && isSubmitLikeLabel(resolveLabel(item))
+        )
+        const nextEvent = pageEvents[i + 1]
+        if (hasSubmitLikeAction && nextEvent && isInteractiveAction(nextEvent.action)) {
+          scenarios.push({ type: getCaseType(current), events: current })
+          current = []
         }
       }
     }
@@ -903,6 +966,10 @@ function splitPageScenarios(pageEvents = []) {
 function getPrecondition(recording = [], caseType = DEFAULT_CASE_TYPE) {
   const gotoEvent = recording.find(({ action }) => action === headlessActions.GOTO)
   const conditions = []
+  const inferText = getScenarioInferText(recording)
+  const keyword = inferActionKeyword(inferText)
+  const menuTarget = getMenuPathTarget(recording)
+  const screenshotTarget = getScreenshotTarget(recording)
 
   if (gotoEvent?.href) {
     conditions.push(`已进入目标页面（${gotoEvent.href}）`)
@@ -914,6 +981,22 @@ function getPrecondition(recording = [], caseType = DEFAULT_CASE_TYPE) {
   const hasInput = recording.some(event => ['keydown', 'change', 'select'].includes(event.action))
   if (hasInput) {
     conditions.push('业务前置数据已准备完成')
+  }
+
+  if (keyword === '登录') {
+    conditions.push('存在可用测试账号，且账号具备目标功能访问权限')
+  } else if (['编辑', '删除', '查看', '查询'].includes(keyword)) {
+    conditions.push('待操作业务数据已存在，且具备对应查询或维护权限')
+  } else if (['新增', '上传', '下载', '提交'].includes(keyword)) {
+    conditions.push('具备对应业务操作权限')
+  }
+
+  if (menuTarget) {
+    conditions.push(`已具备进入"${menuTarget}"功能模块的访问权限`)
+  }
+
+  if (screenshotTarget) {
+    conditions.push(`"${screenshotTarget}"区域已稳定渲染，可进行截图校验`)
   }
 
   if (caseType === CASE_TYPES.SECURITY) {
@@ -1346,12 +1429,14 @@ export function buildTestCase(recording = [], index = 1, meta = {}) {
     : rawFeature
 
   // 用例标题：对齐示例「登录-边界值测试-密码为6位数字」风格（改进方向第 6/7 条）
-  const keyword = inferActionKeyword(
-    recording
-      .map(e => `${e.label || ''} ${e.selector || ''} ${e.value || ''} ${e.href || ''}`)
-      .join(' ')
-  )
-  const featureLabel = keyword || feature
+  const keyword = inferActionKeyword(getScenarioInferText(recording))
+  const menuTarget = getMenuPathTarget(recording)
+  const screenshotTarget = getScreenshotTarget(recording)
+  const featureLabel = screenshotTarget
+    ? `${screenshotTarget}截图`
+    : menuTarget && keyword && keyword !== '登录'
+    ? `${menuTarget}${keyword}`
+    : menuTarget || keyword || feature
 
   // 提取输入的具体测试数据，拼到标题末尾（如「密码：123456」→「123456」）
   const firstInput = recording.find(e => e.action === 'keydown' && e.value)

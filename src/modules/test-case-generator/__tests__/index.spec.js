@@ -316,6 +316,77 @@ describe('TestCaseGenerator', () => {
     expect(testCase['操作步骤']).not.toContain('""body""')
   })
 
+  test('hash 路由变化也会触发跨页面拆分，并为导航场景生成更具体标题与前置条件', () => {
+    const generator = new TestCaseGenerator()
+    const rows = generator.generate([
+      { action: headlessActions.GOTO, href: 'https://example.com/#/login' },
+      { action: 'keydown', selector: '#username', value: 'admin', label: '用户名' },
+      { action: 'click', selector: '.login-btn', label: '登录' },
+      { action: headlessActions.NAVIGATION, href: 'https://example.com/#/dashboard' },
+      { action: 'click', selector: '.menu-root', label: '绩效管理' },
+      { action: 'click', selector: '.menu-leaf', label: '绩效配置' },
+    ])
+
+    const loginRow = rows.find(
+      row => row['功能'] && row['功能'].includes('example.com/login') && row['操作步骤'].includes('登录')
+    )
+    const dashboardRow = rows.find(
+      row =>
+        row['功能'] &&
+        row['功能'].includes('example.com/dashboard') &&
+        row['操作步骤'].includes('绩效管理 → 绩效配置')
+    )
+
+    expect(loginRow).toBeTruthy()
+    expect(loginRow['用例标题']).toContain('登录-')
+    expect(loginRow['前置条件']).toContain('存在可用测试账号')
+
+    expect(dashboardRow).toBeTruthy()
+    expect(dashboardRow['功能']).toContain('绩效配置导航访问')
+    expect(dashboardRow['用例标题']).toContain('绩效配置-')
+    expect(dashboardRow['前置条件']).toContain('已具备进入"绩效配置"功能模块的访问权限')
+  })
+
+  test('截图场景会生成更具体的标题和前置条件文案', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/report' },
+      { action: headlessActions.SCREENSHOT, value: '结果面板' },
+    ])
+
+    expect(testCase['功能']).toContain('结果面板截图校验')
+    expect(testCase['用例标题']).toContain('结果面板截图-')
+    expect(testCase['前置条件']).toContain('"结果面板"区域已稳定渲染，可进行截图校验')
+    expect(testCase['测试数据']).toContain('截图对象：结果面板')
+  })
+
+  test('保存成功提示后开始的新交互会被拆分为独立场景，并改进查询类用例分类与前置条件', () => {
+    const generator = new TestCaseGenerator()
+    const rows = generator.generate([
+      { action: headlessActions.GOTO, href: 'https://example.com/order' },
+      { action: 'click', selector: '.add-btn', label: '新增' },
+      { action: 'keydown', selector: '#name', value: '测试订单', label: '订单名称' },
+      { action: 'click', selector: '.save-btn', label: '保存' },
+      { action: headlessActions.NOTICE, noticeType: 'success', value: '保存成功' },
+      { action: 'click', selector: '.search-btn', label: '搜索' },
+      { action: headlessActions.NAVIGATION },
+    ])
+
+    const createRow = rows.find(
+      row => row['功能'] && row['功能'].includes('新增操作') && row['操作步骤'].includes('测试订单')
+    )
+    const queryRow = rows.find(
+      row => row['功能'] && row['功能'].includes('查询功能') && row['操作步骤'].includes('点击"搜索"')
+    )
+
+    expect(createRow).toBeTruthy()
+    expect(createRow['预期结果']).toContain('保存成功')
+
+    expect(queryRow).toBeTruthy()
+    expect(queryRow['用例类型']).toBe('功能')
+    expect(queryRow['前置条件']).toContain('待操作业务数据已存在，且具备对应查询或维护权限')
+    expect(queryRow['用例标题']).toContain('查询-功能正常')
+  })
+
   test('formType 会驱动输入类 change 使用“输入”动词并带上控件后缀', () => {
     const testCase = buildTestCase([
       { action: headlessActions.GOTO, href: 'https://example.com/expense' },
