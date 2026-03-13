@@ -56,7 +56,7 @@ describe('TestCaseGenerator', () => {
         action: 'keydown',
         selector: '.el-form > .is-required > .el-input__inner',
         value: 'admin',
-        label: '用户名',  // Recorder 从 <label> 或 placeholder 采集
+        label: '用户名', // Recorder 从 <label> 或 placeholder 采集
       },
       {
         action: 'keydown',
@@ -67,7 +67,7 @@ describe('TestCaseGenerator', () => {
       {
         action: 'click',
         selector: '.sys-password-login .el-button',
-        label: '登录',   // Recorder 从 button textContent 采集
+        label: '登录', // Recorder 从 button textContent 采集
       },
       { action: headlessActions.NAVIGATION },
     ])
@@ -130,7 +130,11 @@ describe('TestCaseGenerator', () => {
       // SVG use 图标（tagName=USE，应被过滤）
       { action: 'click', selector: 'li.menu > span > svg > use', tagName: 'USE', label: '' },
       // el-icon-arrow-down 上溯成功：_getElementLabel 已取到父菜单标题，label 为真实业务名
-      { action: 'click', selector: '.el-submenu__icon-arrow.el-icon-arrow-down', label: '绩效配置' },
+      {
+        action: 'click',
+        selector: '.el-submenu__icon-arrow.el-icon-arrow-down',
+        label: '绩效配置',
+      },
       // el-icon-arrow-right 上溯失败（父元素无文字），translateSelector 翻译为"展开箭头"，应被过滤
       { action: 'click', selector: '.el-icon-arrow-right', label: '' },
       // 侧边栏菜单容器（MENU_NOISE_LABELS 命中，应被过滤）
@@ -261,5 +265,54 @@ describe('TestCaseGenerator', () => {
     // ── 断言 5：两条 TC 的"功能"字段分别包含各自的路由路径（不能混淆）
     expect(loginRow['功能']).not.toContain('dashboard')
     expect(dashRow['功能']).not.toContain('login')
+  })
+
+  test('uni-app 占位提示会被规范化为明确字段名，重复输入仅保留最终测试数据', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/reimburse' },
+      { action: headlessActions.NAVIGATION },
+      { action: 'click', selector: 'uni textarea textarea', label: '' },
+      { action: 'click', selector: 'uni textarea textarea', label: '请输入报销事由' },
+      {
+        action: 'keydown',
+        selector: 'uni textarea textarea',
+        value: '申请测试',
+        label: '请输入报销事由',
+      },
+      {
+        action: 'keydown',
+        selector: 'uni textarea textarea',
+        value: '申请测试录制',
+        label: '请输入报销事由',
+      },
+      {
+        action: 'change',
+        selector: 'uni-picker .uni-picker__input',
+        value: '日常报销',
+        label: '请选择报销类型',
+      },
+    ])
+
+    expect(testCase['测试数据']).toBe('报销事由：申请测试录制；报销类型（选择）：日常报销')
+    expect(testCase['操作步骤']).toContain('在"报销事由"中输入"申请测试录制"')
+    expect(testCase['操作步骤']).toContain('在"报销类型"中选择"日常报销"')
+    expect(testCase['操作步骤']).not.toContain('申请测试；')
+    expect(testCase['操作步骤']).not.toContain('')
+    expect(testCase['操作步骤']).not.toContain('点击"请输入报销事由"')
+  })
+
+  test('uni-app 通用 textarea/body 选择器会输出更易懂的字段名称', () => {
+    const testCase = buildTestCase([
+      { action: headlessActions.GOTO, href: 'https://example.com/editor' },
+      { action: 'keydown', selector: 'uni textarea textarea', value: '申请说明', label: '' },
+      { action: 'keydown', selector: 'body', value: '补充备注', label: '' },
+    ])
+
+    expect(testCase['测试数据']).toContain('文本域：申请说明')
+    expect(testCase['测试数据']).toContain('编辑区域：补充备注')
+    expect(testCase['操作步骤']).toContain('在"文本域"中输入"申请说明"')
+    expect(testCase['操作步骤']).toContain('在"编辑区域"中输入"补充备注"')
+    expect(testCase['操作步骤']).not.toContain('uni textarea textarea')
+    expect(testCase['操作步骤']).not.toContain('""body""')
   })
 })

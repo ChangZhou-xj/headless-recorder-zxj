@@ -220,17 +220,26 @@ function isMeaningfulEvent(event) {
   // 按 tagName 过滤 SVG 图标元素（Recorder 已在 payload 中携带 tagName）
   if (event.tagName && SVG_TAG_NAMES.has(event.tagName.toUpperCase())) return false
 
-  const label = resolveLabel(event)
+  const label = normalizeTextLabel(resolveLabel(event))
 
   // 空标签 / SVG fallback 的 "use" 标签
-  if (!label || label === '"use"' || label === 'use') return false
+  if (!label || label === 'use') return false
+
+  // iconfont 私有区字符（如 ""）不具备业务语义，应过滤
+  if (PRIVATE_USE_ICON_LABEL.test(label)) return false
 
   // 已知噪音标签（结构性 Element UI 元素翻译结果）
   if (MENU_NOISE_LABELS.has(label)) return false
 
-  // translateSelector fallback 会把未知 class 名用双引号包裹，如 "el submenu title"
+  // translateSelector fallback 会把未知 class 名转成拼接的 class 片段，如 "el submenu title"
   // 这类标签仅由 CSS class 片段拼凑，不具备业务语义，统一过滤
-  if (/^"[a-z][\w\s-]{2,}"$/.test(label)) return false
+  if (
+    /^[a-z][\w\s-]{2,}$/.test(label) &&
+    /[\s_-]/.test(label) &&
+    !ACTION_BUTTON_LABELS.has(label)
+  ) {
+    return false
+  }
 
   // 加载状态类标签（"加载中"、"Loading..."等）：系统状态，不是用户操作
   if (/^(加载中|加载\.+|loading\.+|请稍候|请稍等|处理中)$/i.test(label)) return false
@@ -295,6 +304,57 @@ const ACTION_BUTTON_LABELS = new Set([
   'Confirm',
   'confirm',
 ])
+
+const PRIVATE_USE_ICON_LABEL = /^[\uE000-\uF8FF]+$/
+
+function normalizeTextLabel(text = '') {
+  return `${text}`
+    .trim()
+    .replace(/^"+|"+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function normalizePlaceholderLabel(label = '') {
+  return normalizeTextLabel(label)
+    .replace(/^[*：:\s]+/, '')
+    .replace(/[：:\s]+$/, '')
+    .replace(/(输入框|选择框|下拉选择框|下拉框|文本框|文本域|控件|按钮)$/, '')
+    .replace(/^(请)?(输入|填写|录入|补充|键入)/, '')
+    .replace(/^(请)?(选择|选取)/, '')
+    .replace(/^(请)?搜索/, '')
+    .replace(/^(请输入|请选择|请填写)$/, '')
+    .trim()
+}
+
+function inferGenericFieldLabel(selector = '', action = '') {
+  const s = (selector || '').toLowerCase()
+
+  if (/uni[-\s_]*textarea|\btextarea\b/.test(s)) return '文本域'
+  if (/uni[-\s_]*body|\bbody\b/.test(s))
+    return ['keydown', 'change'].includes(action) ? '编辑区域' : ''
+  if (/date|time|picker|calendar/.test(s)) return '日期/时间选择'
+  if (/select|dropdown|cascader/.test(s)) return '下拉选择框'
+  if (/uni[-\s_]*input|\binput\b/.test(s)) return '输入框'
+
+  return ''
+}
+
+function isGenericInputLabel(label = '') {
+  return /^(input|textarea|body|uni body|uni textarea textarea|uni textarea|uni input)$/i.test(
+    label
+  )
+}
+
+function getInputLikeLabel(event = {}) {
+  const label = normalizePlaceholderLabel(resolveLabel(event))
+  if (label && !PRIVATE_USE_ICON_LABEL.test(label) && !isGenericInputLabel(label)) return label
+
+  const generic = inferGenericFieldLabel(event.selector, event.action)
+  if (generic) return generic
+
+  return normalizeTextLabel(translateSelector(event.selector || ''))
+}
 
 /**
  * 检测连续 click 事件是否构成菜单导航路径。
@@ -712,7 +772,9 @@ function getEventActionText(event = {}) {
   }
 
   // resolveLabel 优先用录制时采集的真实标签，降级才用选择器翻译
-  const label = resolveLabel(event)
+  const label = ['keydown', 'change'].includes(action)
+    ? getInputLikeLabel(event)
+    : normalizeTextLabel(resolveLabel(event))
   const labelStr = label ? `"${label}"` : '该元素'
 
   switch (action) {
@@ -741,7 +803,9 @@ function getEventActionText(event = {}) {
 function getEventExpectationText(event = {}, caseType = DEFAULT_CASE_TYPE) {
   const { action, value, href } = event
   // 优先使用录制时的真实标签
-  const label = resolveLabel(event)
+  const label = ['keydown', 'change'].includes(action)
+    ? getInputLikeLabel(event)
+    : normalizeTextLabel(resolveLabel(event))
 
   // 菜单导航路径的预期：进入最终目标功能模块
   if (event._menuPath) {
@@ -819,45 +883,32 @@ function listText(items = [], fallback = '无') {
 }
 
 function getTestData(recording = []) {
-  function extractFieldName(event) {
-    // 优先用录制时的真实标签（已经是人类可读的字段名）
-    const live = (event.label || '').trim()
-    if (live) {
-      // 去掉尾部「输入框/选择框/控件」等对字段名无意义的后缀
-      return live.replace(/(输入框|选择框|下拉选择框|控件|按钮)$/, '').trim() || live
-    }
-    // 降级：用 translateSelector 并去后缀
-    const raw = translateSelector(event.selector || '')
-    return (
-      raw
-        .replace(/(输入框|选择框|下拉选择框|控件|按钮)$/, '')
-        .replace(/^"|"$/g, '')
-        .trim() || event.selector
-    )
-  }
+  const rows = new Map()
+  const screenshots = new Set()
 
-  const rows = recording.reduce((result, event) => {
+  deduplicateEvents(recording).forEach(event => {
     if (event.action === 'keydown' && event.selector && event.value) {
-      // 优先使用录制时字段标签，对应改进方向第 5 条
-      const fieldName = extractFieldName(event)
-      result.push(`${fieldName}：${event.value}`)
+      const fieldName = getInputLikeLabel(event)
+      const key = `input:${event.selector || fieldName}`
+      rows.delete(key)
+      rows.set(key, `${fieldName}：${event.value}`)
     }
 
     if (event.action === 'change' && event.selector && event.value) {
       // checkbox / radio 的 change 没有有意义的"测试数据"（checked 状态不是数据）
-      if (event.checked !== undefined) return result
-      const fieldName = extractFieldName(event)
-      result.push(`${fieldName}（选择）：${event.value}`)
+      if (event.checked !== undefined) return
+      const fieldName = getInputLikeLabel(event)
+      const key = `change:${event.selector || fieldName}`
+      rows.delete(key)
+      rows.set(key, `${fieldName}（选择）：${event.value}`)
     }
 
     if (event.action === headlessActions.SCREENSHOT) {
-      result.push(event.value ? `截图对象：${event.value}` : '截图对象：整页')
+      screenshots.add(event.value ? `截图对象：${event.value}` : '截图对象：整页')
     }
+  })
 
-    return result
-  }, [])
-
-  return Array.from(new Set(rows)).join('；') || '无特殊测试数据'
+  return [...rows.values(), ...screenshots].join('；') || '无特殊测试数据'
 }
 
 /**
@@ -871,6 +922,19 @@ function isHumanStep(event, index, arr) {
   if (event.action === headlessActions.NAVIGATION) return false
   // NOTICE 是系统弹出的通知，属于"预期结果"而非"操作步骤"
   if (event.action === headlessActions.NOTICE) return false
+  // 点击输入框后立刻在同一元素输入/选择，仅保留真正的表单操作，避免重复步骤
+  if (event.action === 'click') {
+    const next = arr[index + 1]
+    if (
+      next &&
+      ['keydown', 'change'].includes(next.action) &&
+      event.selector &&
+      next.selector &&
+      event.selector === next.selector
+    ) {
+      return false
+    }
+  }
   // GOTO 只保留场景内第一次出现（去掉因冒泡等产生的重复 GOTO）
   if (event.action === headlessActions.GOTO) {
     return arr.findIndex(e => e.action === headlessActions.GOTO) === index
