@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-gray-lightest dark:bg-black flex flex-col overflow-hidden">
+  <div class="bg-gray-lightest dark:bg-black flex flex-col overflow-hidden h-full">
     <Header @options="openOptions" @help="goHelp" @dark="toggleDarkMode" />
 
     <Home
@@ -18,27 +18,20 @@
       v-show="!showResultsTab && isRecording"
     />
 
-    <Results
-      :cases="testCases"
-      v-if="showResultsTab"
-    />
+    <Results :cases="testCases" @update:cases="testCases = $event" v-if="showResultsTab" />
 
     <!-- TODO: Move this into its own component -->
     <div
       data-test-id="results-footer"
-      class="flex py-2 px-3 justify-between bg-black-shady"
-      v-show="showResultsTab"
+      class="flex py-2 px-3 gap-2 justify-start flex-shrink-0 bg-black-shady"
+      v-if="showResultsTab && testCases.length"
     >
-      <Button dark class="mr-2" @click="restart" v-show="testCases.length">
+      <Button dark @click="restart">
         <img src="/icons/dark/sync.svg" class="mr-1" alt="重新录制" />
         重新录制
       </Button>
-      <Button dark class="mr-2 w-34" @click="exportExcel" v-show="testCases.length">
-        <img
-          src="/icons/dark/duplicate.svg"
-          class="mr-1"
-          alt="导出测试用例 Excel"
-        />
+      <Button dark class="w-34" @click="exportExcel">
+        <img src="/icons/dark/duplicate.svg" class="mr-1" alt="导出测试用例 Excel" />
         <span v-show="!isExporting">导出 Excel（.xlsx）</span>
         <span v-show="isExporting">已导出</span>
       </Button>
@@ -290,9 +283,21 @@ export default {
 </script>
 
 <style>
-html {
-  width: 386px;
-  height: 535px;
+html,
+body {
+  width: 900px;
+  height: 720px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 button:focus-visible {

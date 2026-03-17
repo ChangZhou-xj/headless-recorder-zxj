@@ -1,5 +1,5 @@
 <template>
-  <div class="flex justify-between items-center p-4 pb-0 mb-2">
+  <div class="flex flex-shrink-0 justify-between items-center p-4 pb-0 mb-2">
     <h1 role="button" class="text-sm font-semibold text-gray-darkest dark:text-gray-lightest">
       测试用例录制器
     </h1>
